@@ -92,3 +92,11 @@ def test_settings_missing_or_corrupt(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text("{not json")
     assert Settings.load(bad) == Settings()
+
+
+def test_view_shows_time_left_when_connected():
+    view = build_view(snap(left=100, right=60, case=70), "My AirPods", connected=True, minutes_left=222)
+    assert view.subtitle == "Connected · About 3h 40m left"
+    assert view.summary().endswith("About 3h 40m left")
+    nearby = build_view(snap(left=100, right=60, case=70), "My AirPods", connected=False, minutes_left=222)
+    assert "left" not in nearby.subtitle

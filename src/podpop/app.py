@@ -12,6 +12,7 @@ Windows reports a link change.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -24,14 +25,16 @@ from PySide6.QtWidgets import QApplication
 from . import audio_connect
 from .alerts import LowBatteryMonitor
 from .ble import Advert, BleListener, ScannerState
+from .catalog import guess_from_name
 from .connection import ConnectionEvent, ConnectionWatcher
 from .doctor import LinkDoctor
 from .ear import EarAction, EarDetector
 from .hotkeys import HotkeyManager
 from .media import MediaController
 from .presenter import DeviceView, build_view
+from .runtime import RuntimeEstimator
 from .protocol import Part
-from .settings import Settings
+from .settings import Settings, config_dir
 from .state import Tracker
 from .ui.popup import Action, PopupWindow
 from .ui.theme import theme_for
@@ -72,6 +75,9 @@ class PodPopApp(QObject):
         self._connecting = False
         self._connect_failed = False
         self._doctor = LinkDoctor()
+        self._runtime = RuntimeEstimator()
+        self._runtime_path = config_dir() / "battery_profile.json"
+        self._load_runtime()
         self._ear = EarDetector()
         self._last_ears: tuple[bool, bool] | None = None
         self._media = MediaController()
@@ -191,6 +197,8 @@ class PodPopApp(QObject):
         elif self._pending_popup.isActive() and self._tracker.snapshot().has_fresh_data:
             self.show_popup()
         if result.changed:
+            if self._runtime.update(self._tracker.snapshot()):
+                self._save_runtime()
             self._refresh()
 
     def _on_connection(self, event: ConnectionEvent) -> None:
@@ -309,7 +317,25 @@ class PodPopApp(QObject):
 
     def _view(self) -> DeviceView:
         target = self._paired_airpods()
-        return build_view(self._tracker.snapshot(), target.name if target else None, bool(self._audio_connected))
+        snapshot = self._tracker.snapshot()
+        family = (snapshot.model or guess_from_name(target.name if target else "")).family
+        minutes = self._runtime.minutes_left(snapshot, family)
+        return build_view(snapshot, target.name if target else None, bool(self._audio_connected), minutes)
+
+    def _load_runtime(self) -> None:
+        try:
+            self._runtime.load(json.loads(self._runtime_path.read_text(encoding="utf-8")))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, AttributeError):
+            log.warning("Ignoring unreadable battery profile %s", self._runtime_path)
+
+    def _save_runtime(self) -> None:
+        try:
+            self._runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            self._runtime_path.write_text(json.dumps(self._runtime.to_dict()), encoding="utf-8")
+        except OSError:
+            log.exception("Could not save battery profile")
 
     def _refresh(self) -> None:
         view = self._view()

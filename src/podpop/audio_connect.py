@@ -7,8 +7,12 @@ connection, which is what the Connect button in Bluetooth settings does.
 The same technique is used by ToothTray.
 
 The audio endpoints of a paired headset exist even while it is connected to
-another device (state "unplugged"), so this works when your AirPods are on
-your iPhone.
+another device (state "unplugged"). But the property only re-opens audio on
+an existing Bluetooth link: when the AirPods moved to an iPhone, the PC's
+link is gone and the request silently does nothing. So connect() first
+*wakes* the link with an uncached SDP service query (Windows has to page the
+device to answer it), waits for it to settle, then asks for audio, retrying
+a few times.
 
     endpoint (IMMDevice) -> IDeviceTopology -> connector -> KS filter device
         -> IKsControl.KsProperty(KSPROPSETID_BtAudio, ONESHOT_RECONNECT)
@@ -25,6 +29,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import asyncio
 import re
 import time
 from ctypes import HRESULT, POINTER, Structure, byref, c_uint, c_void_p, c_wchar_p
@@ -174,8 +179,51 @@ def active_devices() -> set[str]:
             comtypes.CoUninitialize()
 
 
+CONNECT_ATTEMPTS = 4
+LINK_SETTLE_S = 0.6
+AUDIO_WAIT_S = 3.0
+
+
 def connect(mac: str) -> None:
-    _oneshot(mac, _Op.RECONNECT)
+    """Bring the headset's audio to this PC, waking the Bluetooth link first.
+
+    Returns once the audio endpoint is active; raises ConnectError otherwise.
+    """
+    mac = mac.upper()
+    responded = False
+    for attempt in range(1, CONNECT_ATTEMPTS + 1):
+        responded |= _wake_link(mac)
+        time.sleep(LINK_SETTLE_S)
+        _oneshot(mac, _Op.RECONNECT)
+        deadline = time.monotonic() + AUDIO_WAIT_S
+        while time.monotonic() < deadline:
+            if mac in active_devices():
+                log.info("Audio connected on attempt %d", attempt)
+                return
+            time.sleep(0.25)
+        log.info("Audio not up after attempt %d", attempt)
+    if not responded:
+        raise ConnectError("The AirPods didn't respond. Are they nearby and out of the case?")
+    raise ConnectError("The AirPods responded but wouldn't switch their audio to this PC.")
+
+
+def _wake_link(mac: str) -> bool:
+    """Force Windows to page the device by asking for its services uncached."""
+
+    async def query() -> bool:
+        from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothDevice
+
+        device = await BluetoothDevice.from_bluetooth_address_async(int(mac, 16))
+        if device is None:
+            return False
+        result = await device.get_rfcomm_services_with_cache_mode_async(BluetoothCacheMode.UNCACHED)
+        return int(result.error) == 0
+
+    try:
+        return asyncio.run(query())
+    except Exception:
+        log.debug("Waking the Bluetooth link failed", exc_info=True)
+        return False
 
 
 def disconnect(mac: str) -> None:

@@ -13,6 +13,7 @@ dependencies = [
     "comtypes>=1.2",
     "PySide6-Essentials>=6.7",
     "winrt-runtime>=2.0",
+    "winrt-Windows.Devices.Bluetooth.Rfcomm>=2.0",
     "winrt-Windows.Devices.Enumeration>=2.0",
     "winrt-Windows.Media.Control>=2.0",
 ]

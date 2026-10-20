@@ -32,7 +32,7 @@ import logging
 import asyncio
 import re
 import time
-from ctypes import HRESULT, POINTER, Structure, byref, c_uint, c_void_p, c_wchar_p
+from ctypes import HRESULT, POINTER, Structure, byref, c_uint, c_ulong, c_ushort, c_void_p, c_wchar_p
 from ctypes.wintypes import DWORD, ULONG
 from dataclasses import dataclass
 from enum import IntEnum
@@ -76,6 +76,27 @@ class IKsControl(IUnknown):
             (["out"], POINTER(ULONG), "BytesReturned"),
         ),
     ]
+
+
+class _PROPERTYKEY(Structure):
+    _fields_ = [("fmtid", GUID), ("pid", c_ulong)]
+
+
+class _PROPVARIANT(Structure):
+    _fields_ = [("vt", c_ushort), ("r1", c_ushort), ("r2", c_ushort), ("r3", c_ushort), ("ptr", c_void_p), ("pad", c_void_p)]
+
+
+class IPropertyStore(IUnknown):
+    _iid_ = GUID("{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "GetCount", (["out"], POINTER(c_ulong), "cProps")),
+        COMMETHOD([], HRESULT, "GetAt", (["in"], c_ulong, "iProp"), (["out"], POINTER(_PROPERTYKEY), "pkey")),
+        COMMETHOD([], HRESULT, "GetValue", (["in"], POINTER(_PROPERTYKEY), "key"), (["out"], POINTER(_PROPVARIANT), "pv")),
+    ]
+
+
+_PKEY_DEVICE_FRIENDLY_NAME = _PROPERTYKEY(GUID("{A45C254E-DF1C-4EFD-8020-67D146A850E0}"), 14)
+_VT_LPWSTR = 31
 
 
 class IConnector(IUnknown):
@@ -181,34 +202,44 @@ def active_devices() -> set[str]:
 
 CONNECT_TIMEOUT_S = 25.0
 LINK_SETTLE_S = 0.5
-REQUEST_EVERY_S = 1.0  # ask for audio this often until it comes up
+FAST_PATH_WAIT_S = 8.0  # how long the hands-free + stereo request gets before falling back
+REQUEST_EVERY_S = 2.0  # fallback: re-ask for stereo this often
 REWAKE_AFTER_S = 3.0  # re-wake the link only if it has been down this long
 
 
-def connect(mac: str) -> None:
-    """Bring the headset's audio to this PC, waking the Bluetooth link first.
+def connect(mac: str, device_name: str | None = None) -> None:
+    """Bring the headset's audio to this PC. Returns once audio is active.
 
-    Wakes the link once, then asks for audio every second until the endpoint
-    is active. The link is only re-woken if it actually drops: waking it
-    repeatedly seemed to restart the AirPods' handover from the other device.
-    Returns once audio is active; raises ConnectError otherwise.
+    1. Wake the Bluetooth link (uncached SDP query: Windows must page the device).
+    2. Fast path: request the hands-free (HFP) channel, then stereo (A2DP).
+       Measured on AirPods Pro 2 taken over from an iPhone: audio in ~3-8 s,
+       versus ~13-15 s when asking for stereo alone, which the AirPods hold
+       off until they have released the phone.
+    3. Fallback: keep asking for stereo every couple of seconds.
+
+    Raises ConnectError if the audio never came up.
     """
     mac = mac.upper()
     start = time.monotonic()
     device = _bluetooth_device(mac)
     responded = _wake_link(device)
-    link_up_at = time.monotonic() if responded else None
     if responded:
-        log.info("Bluetooth link awake after %.1fs", link_up_at - start)
+        log.info("Bluetooth link awake after %.1fs", time.monotonic() - start)
     time.sleep(LINK_SETTLE_S)
 
-    requests = 0
-    next_request = time.monotonic()
+    if device_name:
+        _request_headset_and_stereo(mac, device_name)
+        if _wait_for_audio(mac, FAST_PATH_WAIT_S):
+            log.info("Audio up %.1fs after Connect (hands-free + stereo)", time.monotonic() - start)
+            return
+        log.info("Fast path didn't bring audio up; falling back to stereo requests")
+
+    next_request = 0.0
     link_down_since: float | None = None
     while time.monotonic() - start < CONNECT_TIMEOUT_S:
         now = time.monotonic()
         if mac in active_devices():
-            log.info("Audio up %.1fs after Connect (%d requests)", now - start, requests)
+            log.info("Audio up %.1fs after Connect (stereo fallback)", now - start)
             return
         if _link_up(device):
             link_down_since = None
@@ -219,13 +250,39 @@ def connect(mac: str) -> None:
                 link_down_since = None
         if now >= next_request:
             _oneshot(mac, _Op.RECONNECT)
-            requests += 1
             next_request = now + REQUEST_EVERY_S
         time.sleep(0.2)
 
     if not responded:
         raise ConnectError("The AirPods didn't respond. Are they nearby and out of the case?")
     raise ConnectError("The AirPods responded but wouldn't switch their audio to this PC.")
+
+
+def _request_headset_and_stereo(mac: str, device_name: str) -> None:
+    owns_com = _init_com()
+    try:
+        enumerator = comtypes.CoCreateInstance(_CLSID_MM_DEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
+        headset = _headset_filters(enumerator, device_name)
+        stereo = [f.device_id for f in _filters_for(enumerator, mac) if f.render]
+        if not headset:
+            log.info("No hands-free channel found for %r", device_name)
+        for filter_id in headset + stereo:
+            try:
+                _ks_property(enumerator, filter_id, _Op.RECONNECT)
+            except (OSError, comtypes.COMError) as exc:
+                log.info("Connect request on %s failed: %s", filter_id, exc)
+    finally:
+        if owns_com:
+            comtypes.CoUninitialize()
+
+
+def _wait_for_audio(mac: str, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if mac in active_devices():
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def _bluetooth_device(mac: str):
@@ -270,14 +327,14 @@ def disconnect(mac: str) -> None:
     _oneshot(mac, _Op.DISCONNECT)
 
 
-def reconnect(mac: str, *, drop_timeout_s: float = 10.0, settle_s: float = 1.0) -> None:
+def reconnect(mac: str, device_name: str | None = None, *, drop_timeout_s: float = 10.0, settle_s: float = 1.0) -> None:
     """Drop and re-open the audio link: the fix for "connected but no sound"."""
     disconnect(mac)
     deadline = time.monotonic() + drop_timeout_s
     while mac.upper() in active_devices() and time.monotonic() < deadline:
         time.sleep(0.25)
     time.sleep(settle_s)
-    connect(mac)
+    connect(mac, device_name)
 
 
 def _oneshot(mac: str, op: _Op) -> None:
@@ -327,6 +384,39 @@ def _filters_for(enumerator, mac: str) -> list[_Filter]:
             render = endpoint.GetId().startswith("{0.0.0.")  # render endpoints are {0.0.0.*}, capture {0.0.1.*}
             found[filter_id] = _Filter(filter_id, render)
     return list(found.values())
+
+
+def _friendly_name(endpoint) -> str:
+    """e.g. 'Headset (karim’s AirPods Pro #2 - Find My)'."""
+    try:
+        store = ctypes.cast(endpoint.OpenPropertyStore(0), POINTER(IPropertyStore))  # STGM_READ
+        value = store.GetValue(byref(_PKEY_DEVICE_FRIENDLY_NAME))
+        if value.vt == _VT_LPWSTR and value.ptr:
+            return ctypes.wstring_at(value.ptr)
+    except (OSError, comtypes.COMError):
+        pass
+    return ""
+
+
+def _headset_filters(enumerator, device_name: str) -> list[str]:
+    """KS filters of the hands-free (HFP) channel, found by the device's name.
+
+    The HFP filter id has no Bluetooth address in it, unlike the stereo one,
+    but its endpoints are named after the device: 'Headset (<device name>)'.
+    """
+    found = []
+    collection = enumerator.EnumAudioEndpoints(_E_ALL, _DEVICE_STATE_ACTIVE | _DEVICE_STATE_UNPLUGGED)
+    for i in range(collection.GetCount()):
+        endpoint = collection.Item(i)
+        if device_name not in _friendly_name(endpoint):
+            continue
+        try:
+            filter_id = _connected_filter_id(endpoint)
+        except (OSError, comtypes.COMError):
+            continue
+        if filter_id and "bthhfenum" in filter_id.lower() and filter_id not in found:
+            found.append(filter_id)
+    return found
 
 
 def _connected_filter_id(endpoint) -> str | None:

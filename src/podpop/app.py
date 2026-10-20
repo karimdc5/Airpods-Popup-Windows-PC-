@@ -178,7 +178,9 @@ class PodPopApp(QObject):
         self._connecting, self._connect_failed = True, False
         self._connect_timeout.start()
         self._refresh()
-        threading.Thread(target=self._link_worker, args=(job, mac), name="podpop-link", daemon=True).start()
+        threading.Thread(
+            target=self._link_worker, args=(job, mac, target.name), name="podpop-link", daemon=True
+        ).start()
 
     # ------------------------------------------------------------ handlers
 
@@ -282,9 +284,9 @@ class PodPopApp(QObject):
             log.info("Back in range after being away; reconnecting audio in case it is stuck")
             self.repair_audio()
 
-    def _link_worker(self, job, mac: str) -> None:  # runs on its own thread
+    def _link_worker(self, job, mac: str, device_name: str) -> None:  # runs on its own thread
         try:
-            job(mac)
+            job(mac, device_name)
             self._bridge.connect_done.emit("")
         except Exception as exc:
             log.warning("Bluetooth request failed: %s", exc)

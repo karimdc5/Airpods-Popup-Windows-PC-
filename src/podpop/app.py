@@ -38,6 +38,7 @@ from .settings import Settings, config_dir
 from .state import Tracker
 from .ui.popup import Action, PopupWindow
 from .ui.theme import theme_for
+from .ui.settings_window import SettingsWindow
 from .ui.tray import Tray
 
 log = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class PodPopApp(QObject):
         self._settings_path = settings_path
         self._tracker = Tracker(min_rssi=settings.min_rssi)
         self._alerts = LowBatteryMonitor(settings.low_battery_thresholds)
+        self._alert_thresholds = settings.low_battery_thresholds
         self._name_filter = re.compile(settings.device_name_pattern, re.IGNORECASE)
         self._audio_connected: bool | None = None  # None until the first check
         self._scanner_note: str | None = None
@@ -94,8 +96,11 @@ class PodPopApp(QObject):
 
         self._popup = PopupWindow(theme_for(settings.theme))
         self._popup.connect_clicked.connect(self.connect_device)
-        self._tray = Tray(settings, self._save_settings)
-        self._tray.settings_changed.connect(self._apply_settings)
+        self._tray = Tray()
+        self._settings_window = SettingsWindow(settings, self._save_settings)
+        self._settings_window.changed.connect(self._apply_settings)
+        self._tray.settings_requested.connect(self.open_settings)
+        self._popup.settings_clicked.connect(self.open_settings)
         self._tray.show_requested.connect(self.show_popup)
         self._tray.connect_requested.connect(self.connect_device)
         self._tray.repair_requested.connect(self.repair_audio)
@@ -143,6 +148,10 @@ class PodPopApp(QObject):
             self._connect_failed = False  # a fresh popup offers Connect again
         self._popup.set_action(self._action())
         self._popup.present(self._view(), self._settings.popup_duration_s)
+
+    def open_settings(self) -> None:
+        self._popup.dismiss()
+        self._settings_window.open()
 
     def connect_device(self) -> None:
         """Ask Windows to connect the paired AirPods, e.g. taking them from an iPhone."""
@@ -353,6 +362,10 @@ class PodPopApp(QObject):
                 self._tray.notify("AirPods battery low", f"{side} AirPod is at {alert.level}%.")
 
     def _apply_settings(self) -> None:
+        self._tracker.min_rssi = self._settings.min_rssi
+        if self._settings.low_battery_thresholds != self._alert_thresholds:
+            self._alert_thresholds = self._settings.low_battery_thresholds
+            self._alerts = LowBatteryMonitor(self._alert_thresholds)
         self._popup.follow_cursor = self._settings.popup_follows_mouse
         self._popup.intro_enabled = self._settings.popup_intro_animation
         self._apply_theme()
@@ -364,6 +377,14 @@ class PodPopApp(QObject):
                 self._tray.notify("Shortcut unavailable", f"{', '.join(failed)} is invalid or used by another app.")
 
     def _apply_theme(self) -> None:
+        # Menus and the settings window follow the chosen theme too.
+        # (Setting an unchanged scheme emits nothing, so this can't loop.)
+        scheme = {"dark": Qt.ColorScheme.Dark, "light": Qt.ColorScheme.Light}.get(self._settings.theme)
+        hints = QGuiApplication.styleHints()
+        if scheme is None:
+            hints.unsetColorScheme()
+        else:
+            hints.setColorScheme(scheme)
         self._popup.set_theme(theme_for(self._settings.theme))
 
     def _on_hotkey(self, name: str) -> None:

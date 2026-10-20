@@ -240,6 +240,47 @@ class _CloseButton(QAbstractButton):
         p.end()
 
 
+class _GearButton(QAbstractButton):
+    """Small round settings button next to the close button."""
+
+    def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.theme = theme
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Settings")
+
+    def enterEvent(self, event) -> None:
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self.theme.button_hover if self.underMouse() else self.theme.button)
+        p.drawEllipse(QRectF(self.rect()))
+        c = QPointF(self.width() / 2, self.height() / 2)
+        gear = QPainterPath()
+        teeth, outer, inner = 8, 7.2, 5.4
+        for i in range(teeth * 2):
+            angle = math.pi * i / teeth
+            r = outer if i % 2 == 0 else inner
+            for da in (-0.17, 0.17):
+                point = c + QPointF(math.cos(angle + da) * r, math.sin(angle + da) * r)
+                gear.moveTo(point) if gear.elementCount() == 0 else gear.lineTo(point)
+        gear.closeSubpath()
+        hole = QPainterPath()
+        hole.addEllipse(c, 2.4, 2.4)
+        p.setBrush(self.theme.button_glyph)
+        p.drawPath(gear.subtracted(hole))
+        p.end()
+
+
 class _ActionButton(QAbstractButton):
     """Full-width pill button, like the one on the iPhone popup."""
 
@@ -302,6 +343,7 @@ class _Card(QWidget):
 class PopupWindow(QWidget):
     dismissed = Signal()
     connect_clicked = Signal()
+    settings_clicked = Signal()
 
     def __init__(self, theme: Theme) -> None:
         super().__init__(
@@ -344,6 +386,9 @@ class PopupWindow(QWidget):
         text.addWidget(self._title)
         text.addWidget(self._subtitle)
         header.addLayout(text, 1)
+        self._gear = _GearButton(theme)
+        self._gear.clicked.connect(self.settings_clicked)
+        header.addWidget(self._gear, 0, Qt.AlignmentFlag.AlignTop)
         self._close = _CloseButton(theme)
         self._close.clicked.connect(self.dismiss)
         header.addWidget(self._close, 0, Qt.AlignmentFlag.AlignTop)
@@ -412,6 +457,7 @@ class PopupWindow(QWidget):
         t = self._theme
         self._card.theme = t
         self._close.theme = t
+        self._gear.theme = t
         self._action.theme = t
         self._shadow.setColor(t.shadow)
         self._title.setStyleSheet(f"color: {t.title.name()}; background: transparent;")
@@ -423,7 +469,7 @@ class PopupWindow(QWidget):
 
     def _apply_view(self, view: DeviceView, *, from_zero: bool, ring_delay_ms: int = 150) -> None:
         self._view = view
-        title_width = CARD_W - CARD_MARGINS[0] - CARD_MARGINS[2] - self._close.width() - 8
+        title_width = CARD_W - CARD_MARGINS[0] - CARD_MARGINS[2] - self._close.width() - self._gear.width() - 16
         self._title.setText(QFontMetrics(self._title.font()).elidedText(view.title, Qt.TextElideMode.ElideRight, title_width))
         self._title.setToolTip(view.title)
         self._subtitle.setText(view.subtitle)

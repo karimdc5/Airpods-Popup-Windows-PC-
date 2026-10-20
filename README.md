@@ -11,7 +11,15 @@ with a live battery tooltip.
 - Artwork for each model: AirPods 1/2, 3/4, Pro, Pro 2 and Max, plus Beats.
 - Light and dark mode that follow Windows.
 - **Low-battery notifications** at 20% and 10%, once per threshold.
-- Tray menu: toggle each trigger, start with Windows, open the logs.
+- **Apple-style opening animation**: a close-up of the case pulls back, the lid
+  opens and the buds glide out to their places.
+- **Battery time left** ("About 3h 40m left"): starts from Apple's rated
+  listening time, then learns your buds' real drain rate.
+- **Settings window** (⚙ on the popup, or tray → Settings…): triggers, theme
+  (dark by default), monitor, connection behaviour, alert levels, hotkeys,
+  signal threshold, start with Windows. Changes apply immediately.
+- **Global hotkeys**: Ctrl+Alt+A shows the popup; Ctrl+Alt+C connects the
+  AirPods (or fixes stuck audio if already connected).
 - Single instance: launching it again just shows the popup.
 - **Connect button**: pulls the AirPods over to this PC (for example from your
   iPhone) with one click. Optionally connects automatically when the case opens.
@@ -79,9 +87,9 @@ Logs are in `%LOCALAPPDATA%\PodPop\logs`.
 
 ## Roadmap
 - [x] Auto play/pause media when a bud is taken out.
-- [ ] Settings window (duration, position, thresholds) instead of editing JSON.
+- [x] Settings window.
 - [ ] Per-color artwork (the color byte is decoded).
-- [ ] Global hotkey to show the popup.
+- [x] Global hotkeys.
 
 ## Credits
 Protocol layout cross-checked against

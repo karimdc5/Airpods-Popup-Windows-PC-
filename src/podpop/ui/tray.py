@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRectF, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QObject, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
-from .. import APP_NAME, autostart
+from .. import APP_NAME
 from ..catalog import Family
 from ..presenter import LOW_LEVEL, DeviceView
-from ..settings import Settings, log_dir
 from .artwork import paint_bud
 from .theme import DARK
 
@@ -45,14 +43,12 @@ def render_icon(low: bool = False) -> QIcon:
 class Tray(QObject):
     show_requested = Signal()
     quit_requested = Signal()
-    settings_changed = Signal()
+    settings_requested = Signal()
     connect_requested = Signal()
     repair_requested = Signal()
 
-    def __init__(self, settings: Settings, save_settings: Callable[[], None]) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._settings = settings
-        self._save = save_settings
         self._low: bool | None = None
 
         self._tray = QSystemTrayIcon()
@@ -70,28 +66,7 @@ class Tray(QObject):
         self._repair = menu.addAction("Reconnect audio (fixes no sound)", self.repair_requested.emit)
         self._repair.setEnabled(False)
         menu.addSeparator()
-        self._add_setting(menu, "Pop up when AirPods connect", "popup_on_connect")
-        self._add_setting(menu, "Pop up when the case opens", "popup_on_case_open")
-        self._add_setting(menu, "Connect automatically when the case opens", "auto_connect_on_case_open")
-        self._add_setting(menu, "Fix stuck audio after walking away", "auto_fix_audio")
-        self._add_setting(menu, "Pause when you take an AirPod out", "auto_pause_on_removal")
-        self._add_setting(menu, "Low battery alerts", "low_battery_alerts")
-        self._add_setting(menu, "Pop up on the monitor with the mouse", "popup_follows_mouse")
-        self._add_setting(menu, "Play opening animation", "popup_intro_animation")
-        themes = menu.addMenu("Theme")
-        group = QActionGroup(themes)
-        for value, label in (("dark", "Dark"), ("light", "Light"), ("system", "Match Windows")):
-            action = themes.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(settings.theme == value)
-            action.setActionGroup(group)
-            action.triggered.connect(lambda _checked, v=value: self._set("theme", v))
-        startup = menu.addAction("Start with Windows")
-        startup.setCheckable(True)
-        startup.setChecked(autostart.is_enabled())
-        startup.toggled.connect(self._set_autostart)
-        menu.addSeparator()
-        menu.addAction("Open log folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir()))))
+        menu.addAction("Settings…", self.settings_requested.emit)
         menu.addAction(f"Quit {APP_NAME}", self.quit_requested.emit)
         self._menu = menu
         self._tray.setContextMenu(menu)
@@ -122,25 +97,6 @@ class Tray(QObject):
 
     def notify(self, title: str, message: str) -> None:
         self._tray.showMessage(title, message, render_icon(), 6000)
-
-    def _add_setting(self, menu: QMenu, label: str, field: str) -> QAction:
-        action = menu.addAction(label)
-        action.setCheckable(True)
-        action.setChecked(getattr(self._settings, field))
-
-        action.toggled.connect(lambda checked: self._set(field, checked))
-        return action
-
-    def _set(self, field: str, value) -> None:
-        setattr(self._settings, field, value)
-        self._save()
-        self.settings_changed.emit()
-
-    def _set_autostart(self, enabled: bool) -> None:
-        try:
-            autostart.set_enabled(enabled)
-        except OSError:
-            log.exception("Could not update the startup entry")
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):

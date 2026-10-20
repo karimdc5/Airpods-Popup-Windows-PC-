@@ -49,7 +49,7 @@ FIRST_ADVERT_WAIT_MS = 2500
 REFRESH_MS = 5000
 AUDIO_POLL_MS = 1500
 # How long to wait for the audio to come up after asking Windows to connect.
-CONNECT_TIMEOUT_MS = 25000  # covers a full reconnect cycle
+CONNECT_TIMEOUT_MS = 35000  # covers a full reconnect cycle
 # Let a link that Windows re-opened by itself settle before judging it.
 REPAIR_DELAY_MS = 3000
 EAR_TICK_MS = 200

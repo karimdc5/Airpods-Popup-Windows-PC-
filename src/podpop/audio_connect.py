@@ -179,43 +179,83 @@ def active_devices() -> set[str]:
             comtypes.CoUninitialize()
 
 
-CONNECT_ATTEMPTS = 4
-LINK_SETTLE_S = 0.6
-AUDIO_WAIT_S = 3.0
+CONNECT_TIMEOUT_S = 25.0
+LINK_SETTLE_S = 0.5
+REQUEST_EVERY_S = 1.0  # ask for audio this often until it comes up
+REWAKE_AFTER_S = 3.0  # re-wake the link only if it has been down this long
 
 
 def connect(mac: str) -> None:
     """Bring the headset's audio to this PC, waking the Bluetooth link first.
 
-    Returns once the audio endpoint is active; raises ConnectError otherwise.
+    Wakes the link once, then asks for audio every second until the endpoint
+    is active. The link is only re-woken if it actually drops: waking it
+    repeatedly seemed to restart the AirPods' handover from the other device.
+    Returns once audio is active; raises ConnectError otherwise.
     """
     mac = mac.upper()
-    responded = False
-    for attempt in range(1, CONNECT_ATTEMPTS + 1):
-        responded |= _wake_link(mac)
-        time.sleep(LINK_SETTLE_S)
-        _oneshot(mac, _Op.RECONNECT)
-        deadline = time.monotonic() + AUDIO_WAIT_S
-        while time.monotonic() < deadline:
-            if mac in active_devices():
-                log.info("Audio connected on attempt %d", attempt)
-                return
-            time.sleep(0.25)
-        log.info("Audio not up after attempt %d", attempt)
+    start = time.monotonic()
+    device = _bluetooth_device(mac)
+    responded = _wake_link(device)
+    link_up_at = time.monotonic() if responded else None
+    if responded:
+        log.info("Bluetooth link awake after %.1fs", link_up_at - start)
+    time.sleep(LINK_SETTLE_S)
+
+    requests = 0
+    next_request = time.monotonic()
+    link_down_since: float | None = None
+    while time.monotonic() - start < CONNECT_TIMEOUT_S:
+        now = time.monotonic()
+        if mac in active_devices():
+            log.info("Audio up %.1fs after Connect (%d requests)", now - start, requests)
+            return
+        if _link_up(device):
+            link_down_since = None
+        else:
+            link_down_since = link_down_since or now
+            if now - link_down_since >= REWAKE_AFTER_S:
+                responded |= _wake_link(device)
+                link_down_since = None
+        if now >= next_request:
+            _oneshot(mac, _Op.RECONNECT)
+            requests += 1
+            next_request = now + REQUEST_EVERY_S
+        time.sleep(0.2)
+
     if not responded:
         raise ConnectError("The AirPods didn't respond. Are they nearby and out of the case?")
     raise ConnectError("The AirPods responded but wouldn't switch their audio to this PC.")
 
 
-def _wake_link(mac: str) -> bool:
+def _bluetooth_device(mac: str):
+    async def get():
+        from winrt.windows.devices.bluetooth import BluetoothDevice
+
+        return await BluetoothDevice.from_bluetooth_address_async(int(mac, 16))
+
+    try:
+        return asyncio.run(get())
+    except Exception:
+        log.debug("Could not open the Bluetooth device", exc_info=True)
+        return None
+
+
+def _link_up(device) -> bool:
+    try:
+        return device is not None and int(device.connection_status) == 1  # BluetoothConnectionStatus.CONNECTED
+    except Exception:
+        return False
+
+
+def _wake_link(device) -> bool:
     """Force Windows to page the device by asking for its services uncached."""
+    if device is None:
+        return False
 
     async def query() -> bool:
-        from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothDevice
+        from winrt.windows.devices.bluetooth import BluetoothCacheMode
 
-        device = await BluetoothDevice.from_bluetooth_address_async(int(mac, 16))
-        if device is None:
-            return False
         result = await device.get_rfcomm_services_with_cache_mode_async(BluetoothCacheMode.UNCACHED)
         return int(result.error) == 0
 

@@ -7,8 +7,8 @@ from source; that folder is git-ignored), named after the model:
     airpodsPro_spin.webp    one full turn, played once when the card appears
     airpodsPro_still.png    shown for the rest of the card's life (optional:
                             without it the spin's last frame stays up)
-    airpodsPro_case.png     the case, shown beside the buds (optional:
-                            without it PodPop draws its own)
+    airpodsPro_case.png     the case beside the buds, used only for models
+                            without PodPop's own 3D case render
 
 The name comes from the model (catalog.DeviceModel.hud): ``airpods``,
 ``airpodsGen3``, ``airpodsGen4``, ``airpodsPro``, ``airpodsPro3``,
@@ -42,7 +42,7 @@ def still_for(name: str) -> Path | None:
 
 
 def case_for(name: str) -> Path | None:
-    """Optional picture of the case, shown beside the buds."""
+    """Picture of the case for models without PodPop's 3D case render (the render wins)."""
     return _find(name, "_case", (".png", ".webp"))
 
 

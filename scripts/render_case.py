@@ -1,4 +1,4 @@
-﻿"""Renders case symbols (SVG) into the HUD folder as ``<name>_case.png``.
+"""Renders case symbols (SVG) into the HUD folder as ``<name>_case.png``.
 
 The symbols are Apple SF Symbols, as exported by
 https://github.com/brendanballon/sfsymbols-svg. Apple's SF Symbols licence
@@ -27,7 +27,7 @@ from podpop.ui.hud import hud_dir  # noqa: E402
 
 SYMBOLS = ROOT / "src" / "podpop" / "assets" / "symbols"
 HEIGHT = 260
-TINT = QColor(255, 255, 255, 140)  # .55, like the rest of the card's secondary marks
+TINT = QColor(255, 255, 255, 110)  # .55, like the rest of the card's secondary marks
 
 # PodPop HUD name -> SF Symbol file. Spelled out because the two naming
 # schemes diverge (gen numbers, ".pro", ".wireless"), so no string munging.
@@ -87,4 +87,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
 

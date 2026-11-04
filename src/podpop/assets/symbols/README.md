@@ -1,4 +1,4 @@
-﻿# Case symbols (not included)
+# Case symbols (not included)
 
 `scripts/render_case.py` turns SF Symbol SVGs from this folder into the case
 pictures shown beside the buds (`<name>_case.png` in `%APPDATA%\PodPop\hud`).

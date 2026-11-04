@@ -164,8 +164,7 @@ Handy for development:
 .\.venv\Scripts\python -m podpop --sniff                    # print decoded adverts live
 .\.venv\Scripts\python -m podpop --debug                    # verbose logging
 .\.venv\Scripts\python scripts\make_demo_gif.py             # re-record docs/images/demo.gif
-.\.venv\Scripts\python scripts
-ender_turntable.py          # re-render the 3D frames (needs numpy)
+.\.venv\Scripts\python scripts\render_turntable.py          # re-render the 3D frames (needs numpy)
 ```
 
 Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
@@ -181,8 +180,7 @@ have some for personal use, drop it in `%APPDATA%\PodPop\hud\`:
 |---|---|
 | `airpodsPro_spin.webp` | One full turn with transparency, played once (animated WebP or GIF; Qt can't animate APNG, so convert one first) |
 | `airpodsPro_still.png` | The pose shown afterwards (optional; without it the spin's last frame stays) |
-
-| `airpodsPro_case.png` | The case beside the buds (optional; without it PodPop shows its own render) |
+| `airpodsPro_case.png` | The case beside the buds, only for models without PodPop's own 3D case render (which is the default) |
 
 The names follow the model: `airpods`, `airpodsGen3`, `airpodsGen4`,
 `airpodsPro`, `airpodsPro3`, `airpodsMax`, `beatssolo` and `beatsstudio`
@@ -195,9 +193,11 @@ command:
 
 It converts the spins to WebP (Qt can't animate APNG), copies the stills and
 cases, downloads the case symbols if you don't have them yet (`--fetch`), and
-renders the case pictures from them. Restart PodPop to pick them up.
+renders case pictures from them. Restart PodPop to pick them up.
 
-**Case symbols:** the cases are drawn from [SF Symbols](https://developer.apple.com/sf-symbols/)
+**Case symbols:** the case beside the buds is PodPop's own 3D render by
+default. The symbol pictures are the fallback for models without a render;
+they're drawn from [SF Symbols](https://developer.apple.com/sf-symbols/)
 SVGs exported by [brendanballon/sfsymbols-svg](https://github.com/brendanballon/sfsymbols-svg).
 Those are Apple's, under Apple's SF Symbols licence, so they aren't included
 here: `--fetch` (or `scripts/fetch_symbols.py` on its own) downloads them to

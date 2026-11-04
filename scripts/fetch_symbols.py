@@ -1,4 +1,4 @@
-﻿"""Downloads the case symbols render_case.py needs into the symbols folder.
+"""Downloads the case symbols render_case.py needs into the symbols folder.
 
 Pinned to a commit so a rename upstream can't break it. Run by import_hud.py
 with --fetch, or on its own.

@@ -1,4 +1,4 @@
-﻿import dataclasses
+import dataclasses
 
 from podpop.protocol import Battery, Part, ProximityReport
 from podpop.state import CANDIDATE_TIMEOUT_S, LID_QUIET_S, POD_FRESH_S, Tracker

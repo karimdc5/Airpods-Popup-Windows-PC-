@@ -4,6 +4,8 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $python = Join-Path $root ".venv\Scripts\python.exe"
+# Native tools write progress to stderr; judge them by exit code, not by that.
+$ErrorActionPreference = "Continue"
 
 & $python -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw "Tests failed" }

@@ -1,45 +1,91 @@
-# PodPop
+<h1 align="center">PodPop</h1>
 
-An iPhone-style AirPods popup for Windows. When your AirPods connect, or you
-open the case nearby, a card slides up from the bottom of the screen with
-battery levels for each bud and the case. It lives in the notification area
-with a live battery tooltip.
+<p align="center">
+  <b>The iPhone AirPods popup, on Windows.</b><br>
+  Open the case and a card slides up with live battery for each bud and the case,<br>
+  then connects your AirPods to the PC automatically.
+</p>
+
+<p align="center">
+  <a href="../../releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-PodPop.exe-0A84FF?style=for-the-badge&logo=windows"></a>
+</p>
+
+<p align="center">
+  <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Qt for Python" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-green">
+</p>
+
+<p align="center">
+  <img src="docs/images/popup-dark.png" width="380" alt="PodPop popup in dark mode">
+  <img src="docs/images/popup-light.png" width="380" alt="PodPop popup in light mode">
+</p>
+
+## Download and install
+
+1. Go to the [**latest release**](../../releases/latest) and download **`PodPop.exe`**.
+2. Double-click it. There's nothing to install and you don't need Python.
+3. PodPop goes in the system tray (the **^** next to the clock) and starts by
+   itself every time you sign in.
+
+> **Windows SmartScreen says "Windows protected your PC"?** The exe isn't
+> code-signed, which costs money for a hobby project. Click **More info →
+> Run anyway**. You can also [build it yourself](#build-from-source) from this source.
+
+**Requirements:** Windows 10 or 11 with Bluetooth, and AirPods (or Beats)
+already paired in *Settings → Bluetooth & devices*.
 
 ## Features
-- Popup on **connect** and on **case open**. Click the tray icon to show it any time.
-- Left, right and case battery, charging state, and **in-ear** detection.
-- Artwork for each model: AirPods 1/2, 3/4, Pro, Pro 2 and Max, plus Beats.
-- Light and dark mode that follow Windows.
-- **Low-battery notifications** at 20% and 10%, once per threshold.
-- **Apple-style opening animation**: a close-up of the case pulls back, the lid
-  opens and the buds glide out to their places.
-- **Battery time left** ("About 3h 40m left"): starts from Apple's rated
-  listening time, then learns your buds' real drain rate.
-- **Settings window** (⚙ on the popup, or tray → Settings…): triggers, theme
-  (dark by default), monitor, connection behaviour, alert levels, hotkeys,
-  signal threshold, start with Windows (a Task Scheduler logon task). Changes
-  apply immediately.
-- **Global hotkeys**: Ctrl+Alt+A shows the popup; Ctrl+Alt+C connects the
-  AirPods (or fixes stuck audio if already connected).
-- Single instance: launching it again just shows the popup.
-- **Connect button**: pulls the AirPods over to this PC (for example from your
-  iPhone) with one click, and by default connects automatically when you open
-  the case (turn that off in Settings if you also use them with your phone).
-- **Stuck-audio fix**: Windows sometimes shows AirPods as connected but plays
-  nothing after you walk out of range and back. PodPop notices that you left
-  while wearing them and re-opens the audio link once you're back. It never
-  connects on its own, so it won't take the AirPods from your phone. There's
-  also a manual *Reconnect audio* item in the tray menu.
-- **Ear detection**: take an AirPod out and your music or video pauses; put
-  it back and it resumes, using Windows' media sessions (it never starts
-  playback that wasn't paused by PodPop).
+
+<img src="docs/images/popup-connect.png" width="330" align="right" alt="Popup offering to connect AirPods that are near the PC">
+
+- **Pops up when you open the case**, and when the AirPods connect. Click the
+  tray icon to see it any time.
+- **Connects automatically** when you open the case, even if the AirPods were
+  on your iPhone. There's also a one-click **Connect** button.
+- **Battery for left, right and case**, plus charging state and **in-ear**
+  detection.
+- **Battery time left** ("About 3h 40m left"). It starts from Apple's rated
+  listening time, then learns how fast your own buds drain.
+- **Auto pause/resume.** Take an AirPod out and your music or video pauses.
+  Put it back in and playback resumes.
+- **Stuck-audio fix.** Windows sometimes shows the AirPods as connected but
+  plays nothing after you walk away and come back. PodPop notices and reopens
+  the audio link.
+- **Low-battery alerts** at 20% and 10%.
+- **Artwork for each model**: AirPods 1–4, Pro, Pro 2 and Max, plus Beats.
+  Light and dark themes, and an opening animation where the lid opens and
+  the buds glide out.
+- **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
+  battery, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
+  audio.
+- **Settings window** (⚙ on the popup, or right-click the tray icon). Every
+  feature above can be switched on or off, and changes apply immediately.
+
+<br clear="right">
+
+### Works with every model
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/popup-classic.png" width="260" alt="Regular AirPods"><br><sub>AirPods (1st/2nd gen)</sub></td>
+    <td align="center"><img src="docs/images/popup-airpods4.png" width="260" alt="AirPods 4"><br><sub>AirPods 3 / 4</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/popup-dark.png" width="260" alt="AirPods Pro"><br><sub>AirPods Pro / Pro 2</sub></td>
+    <td align="center"><img src="docs/images/popup-max.png" width="260" alt="AirPods Max"><br><sub>AirPods Max</sub></td>
+  </tr>
+</table>
 
 ## How it works
-AirPods continuously broadcast a Bluetooth LE "Proximity Pairing" advert,
-the same one an iPhone reads. Its battery and status fields are
-unencrypted, so PodPop listens with Windows' own BLE stack (via
-[bleak](https://github.com/hbldh/bleak)) and decodes them. Connect and
-disconnect events come from a WinRT `DeviceWatcher`.
+
+AirPods constantly broadcast a small Bluetooth LE "Proximity Pairing" message.
+It's the same one an iPhone reads to show its popup, and the battery and
+lid/in-ear fields aren't encrypted. PodPop listens through Windows' own BLE
+stack with [bleak](https://github.com/hbldh/bleak) and decodes those bytes.
+Connect and disconnect events come from a WinRT `DeviceWatcher`, and the
+audio connection goes through the Windows Core Audio COM APIs.
 
 ```
  BLE adverts ──► ble.py ──► protocol.py ──► state.Tracker ──┐
@@ -50,50 +96,69 @@ disconnect events come from a WinRT `DeviceWatcher`.
 | Module | Role |
 |---|---|
 | `protocol.py` | Decodes the advert bytes. Pure and unit-tested against real packets. |
-| `catalog.py` | Model IDs, names and product family (picks the artwork). |
-| `state.py` | Merges adverts from both pods, tracks freshness, filters strangers' AirPods by signal strength, and detects the case opening. |
-| `alerts.py` | Low-battery thresholds with re-arming. |
+| `catalog.py` | Model IDs, names and product family (which picks the artwork). |
+| `state.py` | Merges adverts from both buds, tracks freshness, filters out strangers' AirPods by signal strength, and detects the case opening. |
 | `presenter.py` | Turns state into what the UI shows. |
-| `ble.py` / `connection.py` | Windows services on background threads, with retry and watchdog. |
-| `audio_connect.py` | Connect, disconnect and "is audio active" for a paired headset (Windows audio COM APIs). |
-| `doctor.py` | Decides when a stuck link needs a reconnect after you were out of range. Pure and tested. |
-| `ui/` | Popup card, vector artwork, tray icon. |
+| `runtime.py` | Estimates the listening time left from the observed drain rate. |
+| `ble.py` / `connection.py` | Windows services on background threads, with retry and a watchdog. |
+| `audio_connect.py` | Connects, disconnects and checks whether audio is active for a paired headset. |
+| `doctor.py` | Decides when a stuck link needs a reconnect. Pure and tested. |
+| `ear.py` / `media.py` | In-ear changes → pause/resume through Windows media sessions. |
+| `autostart.py` | Start at sign-in through a per-user Task Scheduler task. |
+| `ui/` | Popup card, vector artwork, opening animation, tray icon, settings window. |
 | `app.py` | Wires everything together on the Qt thread. |
 
-## Limits (what AirPods don't broadcast)
-- Battery comes in **10% steps**. Exact 1% values and noise-control modes need
-  Apple's private L2CAP protocol, which Windows doesn't expose to apps.
-- The case battery is only known while a bud sits in it.
-- Someone else's AirPods of the same model nearby can interfere. Raise
-  `min_rssi` in settings (for example to `-65`) if that happens.
+### What AirPods don't broadcast
+- Battery comes in **10% steps**. Exact percentages and noise-control modes
+  need Apple's private L2CAP protocol, which Windows doesn't expose to apps.
+- The case battery is only known while at least one bud is inside it.
+- Someone else's AirPods of the same model nearby can show up. Raise the
+  *Signal threshold* in Settings (for example to −65 dBm) if that happens.
 
-## Run from source
+## Build from source
+
 ```powershell
+git clone <this repo's URL>
+cd <repo folder>
 python -m venv .venv
 .\.venv\Scripts\pip install -e ".[dev]"
-.\.venv\Scripts\pythonw -m podpop          # tray app
-.\.venv\Scripts\python -m podpop --sniff   # print decoded adverts live
-.\.venv\Scripts\python -m podpop --demo pro --theme light   # popup with sample data
-.\.venv\Scripts\python -m pytest
+
+.\.venv\Scripts\pythonw -m podpop                 # run the tray app
+.\.venv\Scripts\python -m pytest                  # run the tests
+.\scripts\build.ps1                               # build dist\PodPop.exe
 ```
 
-## Build a standalone exe
+Handy for development:
+
 ```powershell
-.\scripts\build.ps1      # -> dist\PodPop.exe
+.\.venv\Scripts\python -m podpop --demo pro --theme light   # popup with sample data, no AirPods needed
+.\.venv\Scripts\python -m podpop --demo pro --nearby        # the "Connect" state
+.\.venv\Scripts\python -m podpop --sniff                    # print decoded adverts live
+.\.venv\Scripts\python -m podpop --debug                    # verbose logging
 ```
 
-## Settings
-`%APPDATA%\PodPop\settings.json`: popup triggers and duration, which monitor
-it opens on, low-battery thresholds, `min_rssi`, and the device-name pattern.
-Logs are in `%LOCALAPPDATA%\PodPop\logs`.
+Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
+`%LOCALAPPDATA%\PodPop\logs`.
+
+## Uninstall
+Right-click the tray icon → **Settings** → untick **Start with Windows**, quit
+PodPop, then delete `PodPop.exe`. To remove its data too, delete
+`%APPDATA%\PodPop` and `%LOCALAPPDATA%\PodPop`.
 
 ## Roadmap
-- [x] Auto play/pause media when a bud is taken out.
-- [x] Settings window.
-- [ ] Per-color artwork (the color byte is decoded).
-- [x] Global hotkeys.
+- [x] Auto play/pause when a bud is taken out
+- [x] Settings window
+- [x] Global hotkeys
+- [x] Automatic connect when the case opens
+- [ ] Artwork in each AirPods color (the color byte is already decoded)
+
+Issues and pull requests are welcome.
 
 ## Credits
-Protocol layout cross-checked against
+The protocol layout was cross-checked against
 [AirPodsDesktop](https://github.com/SpriteOvO/AirPodsDesktop) (GPL-3.0; no
 code copied), OpenPods, and furiousMAC's Continuity research.
+
+## License
+[MIT](LICENSE). PodPop is an independent project and isn't affiliated with or
+endorsed by Apple Inc. AirPods and Beats are trademarks of Apple Inc.

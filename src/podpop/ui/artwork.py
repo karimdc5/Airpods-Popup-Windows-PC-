@@ -3,6 +3,12 @@
 Everything is drawn in a fixed design box and scaled to the target rect,
 so it stays crisp at any DPI and needs no image assets. Shapes are
 parameterised by product family.
+
+The look is a studio render rather than an illustration: no outlines, but
+glossy white plastic under a soft light from the top left. Round parts get
+cylinder shading (bright down the middle, grey toward the sides), edges fall
+off into grey, and a soft highlight and contact shadow sell the volume.
+Outlines are only drawn when the theme asks for them (the tiny tray icon).
 """
 
 from __future__ import annotations
@@ -76,9 +82,9 @@ def paint_bud(p: QPainter, rect: QRectF, family: Family, left: bool, theme: Them
     outline = _outline(theme)
 
     stem_bottom = 58 + shape.stem_length
-    _ground_shadow(p, QPointF(34, stem_bottom + 6), 22, 4, theme)
+    _ground_shadow(p, QPointF(40, stem_bottom + 5), 20, 3.5, theme)
 
-    # Stem, tilted so the bottom leans outward.
+    # Stem, tilted so the bottom leans outward: a glossy cylinder.
     p.save()
     p.translate(44, 58)
     p.rotate(8)
@@ -86,51 +92,52 @@ def paint_bud(p: QPainter, rect: QRectF, family: Family, left: bool, theme: Them
     stem_path = QPainterPath()
     stem_path.addRoundedRect(stem, shape.stem_width / 2, shape.stem_width / 2)
     p.setPen(outline)
-    p.setBrush(_vertical(stem, theme.art_light, theme.art_dark))
+    p.setBrush(_cylinder(stem, _WHITE_STOPS))
     p.drawPath(stem_path)
+    p.save()
+    p.setClipPath(stem_path)
+    _end_falloff(p, stem)
     if shape.mic_cap:
-        p.save()
-        p.setClipPath(stem_path)
-        cap = QRectF(stem.left(), stem.bottom() - 11, stem.width(), 11)
-        p.fillRect(cap, _vertical(cap, QColor("#C9CBD1"), QColor("#9EA1A8")))
-        p.restore()
+        cap = QRectF(stem.left(), stem.bottom() - 12, stem.width(), 12)
+        p.fillRect(cap, _cylinder(cap, _METAL_STOPS))
+        p.fillRect(QRectF(cap.left(), cap.top(), cap.width(), 1.2), QColor(0, 0, 0, 40))  # its seam
+    p.restore()
     p.restore()
 
-    # Silicone ear tip, tucked behind the head.
+    # Silicone ear tip, tucked behind the head: matte, softer and greyer.
     if shape.has_tip:
         p.save()
         p.translate(76, 40)
         p.rotate(-28)
         tip = QRectF(-17, -22, 34, 44)
         p.setPen(outline)
-        p.setBrush(_vertical(tip, theme.art_tip.lighter(110), theme.art_tip.darker(112)))
+        p.setBrush(_dome(tip, QColor("#EEEEF1"), QColor("#B9BAC0"), QPointF(0.38, 0.32)))
         p.drawEllipse(tip)
         p.restore()
 
-    # Head.
+    # Head: a glossy dome lit from the top left.
     head = QRectF(18, 14, 66, 62) if shape.has_tip else QRectF(18, 10, 66, 66)
-    gradient = QLinearGradient(head.topLeft(), head.bottomRight())
-    gradient.setColorAt(0, theme.art_light)
-    gradient.setColorAt(1, theme.art_dark)
     p.setPen(outline)
-    p.setBrush(QBrush(gradient))
+    p.setBrush(_dome(head, QColor("#FFFFFF"), QColor("#BFC0C6"), QPointF(0.36, 0.3)))
     p.drawEllipse(head)
 
-    detail = QColor(theme.art_detail)
     p.setPen(Qt.PenStyle.NoPen)
     if not shape.has_tip:  # speaker grille facing the ear
-        detail.setAlpha(170)
-        p.setBrush(detail)
-        p.drawEllipse(QRectF(68, 28, 13, 22))
-    detail.setAlpha(210)
-    p.setBrush(detail)  # outward mic mesh
+        grille = QRectF(68, 28, 13, 22)
+        p.setBrush(_dome(grille, QColor("#5A5A5E"), QColor("#1C1C1E"), QPointF(0.4, 0.3)))
+        p.drawEllipse(grille)
+    # Outward mic mesh: dark, with a thin catch-light on its top edge.
     p.save()
     p.translate(38, 30)
     p.rotate(-14)
-    p.drawRoundedRect(QRectF(-8, -3, 16, 6), 3, 3)
+    mesh = QRectF(-8, -3, 16, 6)
+    p.setBrush(_vertical(mesh, QColor("#4A4A4E"), QColor("#1C1C1E")))
+    p.drawRoundedRect(mesh, 3, 3)
+    p.setBrush(QColor(255, 255, 255, 70))
+    p.drawRoundedRect(QRectF(-6, -2.6, 12, 1.2), 0.6, 0.6)
     p.restore()
 
-    _gloss(p, head, theme)
+    _highlight(p, head, 0.34, 0.24, 0.26, 0.16)
     p.restore()
 
 
@@ -142,7 +149,7 @@ def paint_case(
     p.save()
     _fit(p, rect, *shape.box)
     body = shape.body
-    _ground_shadow(p, QPointF(body.center().x(), body.bottom() + 4), body.width() * 0.44, 6, theme)
+    _ground_shadow(p, QPointF(body.center().x(), body.bottom() + 3), body.width() * 0.46, 6, theme)
 
     path = QPainterPath()
     path.addRoundedRect(body, shape.radius, shape.radius)
@@ -153,16 +160,15 @@ def paint_case(
 
     if lid_open <= 0.0:
         p.setPen(outline)
-        p.setBrush(_vertical(body, theme.art_light, theme.art_dark))
+        p.setBrush(_case_body(body))
         p.drawPath(path)
         p.save()
         p.setClipPath(path, Qt.ClipOperation.IntersectClip)
-        seam = QPen(QColor(theme.art_outline.red(), theme.art_outline.green(), theme.art_outline.blue(), 55))
-        seam.setCosmetic(True)
-        seam.setWidthF(1.2)
-        p.setPen(seam)
-        p.drawLine(QPointF(body.left(), shape.seam_y), QPointF(body.right(), shape.seam_y))
-        p.fillRect(lid_rect, _vertical(lid_rect, QColor(255, 255, 255, 150), QColor(255, 255, 255, 0)))
+        _side_falloff(p, body)
+        # The seam: a fine shadow line with a lit lip just below it.
+        p.fillRect(QRectF(body.left(), shape.seam_y - 0.6, body.width(), 1.3), QColor(0, 0, 0, 46))
+        p.fillRect(QRectF(body.left(), shape.seam_y + 0.7, body.width(), 1.2), QColor(255, 255, 255, 200))
+        _highlight(p, lid_rect, 0.42, 0.34, 0.36, 0.22)
         p.restore()
     else:
         # Base: the body below the seam.
@@ -170,8 +176,12 @@ def paint_case(
         base.addRect(base_rect)
         base = path.intersected(base)
         p.setPen(outline)
-        p.setBrush(_vertical(body, theme.art_light, theme.art_dark))
+        p.setBrush(_case_body(body))
         p.drawPath(base)
+        p.save()
+        p.setClipPath(base, Qt.ClipOperation.IntersectClip)
+        _side_falloff(p, body)
+        p.restore()
 
         # Lid hinges at the back: its front edge lifts, exposing the inside back
         # wall between the lid and the rim.
@@ -187,7 +197,7 @@ def paint_case(
         # The opening, seen slightly from above: a light rim around a dark well.
         well = _well_rect(shape, lid_open)
         p.setPen(outline)
-        p.setBrush(theme.art_light)
+        p.setBrush(_vertical(well.adjusted(-3, -2, 3, 2), QColor("#FFFFFF"), QColor("#E2E2E6")))
         p.drawEllipse(well.adjusted(-3, -2, 3, 2))
         interior = QLinearGradient(well.topLeft(), well.bottomLeft())
         interior.setColorAt(0, QColor("#2C2C2E"))
@@ -307,6 +317,8 @@ def _fit(p: QPainter, rect: QRectF, width: float, height: float) -> None:
 
 
 def _outline(theme: Theme) -> QPen:
+    if theme.art_outline.alpha() == 0:
+        return QPen(Qt.PenStyle.NoPen)
     pen = QPen(theme.art_outline)
     pen.setCosmetic(True)
     pen.setWidthF(1.0)
@@ -318,6 +330,79 @@ def _vertical(rect: QRectF, top: QColor, bottom: QColor) -> QBrush:
     gradient.setColorAt(0, top)
     gradient.setColorAt(1, bottom)
     return QBrush(gradient)
+
+
+# Glossy white plastic across a cylinder: shadowed far edge, a bright band a
+# little left of centre (the light), and a darker near edge.
+_WHITE_STOPS = ((0.0, "#B4B5BB"), (0.18, "#E9E9EC"), (0.4, "#FFFFFF"), (0.62, "#F3F3F5"), (0.86, "#D3D4D9"), (1.0, "#A9AAB0"))
+_METAL_STOPS = ((0.0, "#6F7176"), (0.3, "#B9BBC0"), (0.45, "#E4E5E8"), (0.7, "#A2A4AA"), (1.0, "#5E6065"))
+
+
+def _cylinder(rect: QRectF, stops) -> QBrush:
+    gradient = QLinearGradient(rect.topLeft(), rect.topRight())
+    for at, color in stops:
+        gradient.setColorAt(at, QColor(color))
+    return QBrush(gradient)
+
+
+def _dome(rect: QRectF, light: QColor, edge: QColor, focus: QPointF) -> QBrush:
+    """A lit sphere-ish fill: bright where the light hits, falling off to ``edge``."""
+    center = QPointF(rect.left() + rect.width() * 0.5, rect.top() + rect.height() * 0.5)
+    hot = QPointF(rect.left() + rect.width() * focus.x(), rect.top() + rect.height() * focus.y())
+    gradient = QRadialGradient(center, max(rect.width(), rect.height()) * 0.62, hot)
+    gradient.setColorAt(0.0, light)
+    gradient.setColorAt(0.55, _mix(light, edge, 0.25))
+    gradient.setColorAt(0.85, _mix(light, edge, 0.7))
+    gradient.setColorAt(1.0, edge)
+    return QBrush(gradient)
+
+
+def _case_body(body: QRectF) -> QBrush:
+    gradient = QLinearGradient(body.topLeft(), body.bottomLeft())
+    gradient.setColorAt(0.0, QColor("#FFFFFF"))
+    gradient.setColorAt(0.45, QColor("#F6F6F8"))
+    gradient.setColorAt(0.8, QColor("#E3E3E7"))
+    gradient.setColorAt(1.0, QColor("#C4C5CA"))
+    return QBrush(gradient)
+
+
+def _side_falloff(p: QPainter, body: QRectF) -> None:
+    """Grey the left and right flanks so the box reads as rounded, not flat."""
+    gradient = QLinearGradient(body.topLeft(), body.topRight())
+    gradient.setColorAt(0.0, QColor(90, 92, 100, 95))
+    gradient.setColorAt(0.12, QColor(90, 92, 100, 18))
+    gradient.setColorAt(0.3, QColor(90, 92, 100, 0))
+    gradient.setColorAt(0.75, QColor(90, 92, 100, 0))
+    gradient.setColorAt(0.9, QColor(90, 92, 100, 26))
+    gradient.setColorAt(1.0, QColor(90, 92, 100, 110))
+    p.fillRect(body, QBrush(gradient))
+
+
+def _end_falloff(p: QPainter, rect: QRectF) -> None:
+    """Darken toward the bottom end of a stem, away from the light."""
+    gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+    gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+    gradient.setColorAt(0.7, QColor(0, 0, 0, 0))
+    gradient.setColorAt(1.0, QColor(40, 42, 50, 50))
+    p.fillRect(rect, QBrush(gradient))
+
+
+def _highlight(p: QPainter, shape: QRectF, cx: float, cy: float, rx: float, ry: float) -> None:
+    """A soft specular highlight, positions and radii as fractions of ``shape``."""
+    center = QPointF(shape.left() + shape.width() * cx, shape.top() + shape.height() * cy)
+    radius_x, radius_y = shape.width() * rx, shape.height() * ry
+    glow = QRadialGradient(center, radius_x)
+    glow.setColorAt(0.0, QColor(255, 255, 255, 235))
+    glow.setColorAt(0.5, QColor(255, 255, 255, 90))
+    glow.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.save()
+    p.translate(center)
+    p.scale(1, radius_y / radius_x)
+    p.translate(-center)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(glow))
+    p.drawEllipse(center, radius_x, radius_x)
+    p.restore()
 
 
 def _gloss(p: QPainter, shape: QRectF, theme: Theme) -> None:
@@ -332,7 +417,9 @@ def _gloss(p: QPainter, shape: QRectF, theme: Theme) -> None:
 
 def _ground_shadow(p: QPainter, center: QPointF, rx: float, ry: float, theme: Theme) -> None:
     shadow = QRadialGradient(center, rx)
-    shadow.setColorAt(0, QColor(0, 0, 0, 90 if theme.dark else 55))
+    strength = 120 if theme.dark else 70
+    shadow.setColorAt(0, QColor(0, 0, 0, strength))
+    shadow.setColorAt(0.45, QColor(0, 0, 0, strength // 3))
     shadow.setColorAt(1, QColor(0, 0, 0, 0))
     p.save()
     p.translate(center)

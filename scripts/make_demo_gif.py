@@ -24,8 +24,8 @@ from podpop.ui.popup import PopupWindow  # noqa: E402
 from podpop.ui.theme import DARK, LIGHT  # noqa: E402
 
 FRAME_MS = 40  # 25 fps
-RECORD_MS = 3800  # the slide-in, the case spinning and opening, the batteries filling
-HOLD_MS = 2200  # pause on the finished card before the GIF loops
+RECORD_MS = 6000  # one full turn of the buds and case, the batteries filling
+HOLD_MS = 40  # the turn loops seamlessly
 PAD = 36
 BACKDROP = ((38, 44, 92), (112, 58, 120))  # top-left -> bottom-right, readable on light and dark pages
 
@@ -38,6 +38,8 @@ def main() -> int:
 
     app = QApplication(sys.argv[:1])
     popup = PopupWindow(DARK if args.theme == "dark" else LIGHT)
+    # The glass shows the GIF's own backdrop (the card's slice of it), never the real desktop.
+    popup.backdrop_source = lambda rect: _qpixmap(_backdrop((rect.width() - 2 * PAD, rect.height() - 2 * PAD)))
     _, name = _SAMPLE_MODELS[Family.PRO]
     frames: list[Image.Image] = []
 
@@ -70,6 +72,18 @@ def _to_pil(image) -> Image.Image:
     from io import BytesIO
 
     return Image.open(BytesIO(bytes(buffer.data()))).convert("RGBA")
+
+
+def _qpixmap(image: Image.Image):
+    from io import BytesIO
+
+    from PySide6.QtGui import QPixmap
+
+    buffer = BytesIO()
+    image.convert("RGB").save(buffer, "PNG")
+    pixmap = QPixmap()
+    pixmap.loadFromData(buffer.getvalue(), "PNG")
+    return pixmap
 
 
 def _backdrop(size: tuple[int, int]) -> Image.Image:

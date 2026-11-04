@@ -42,6 +42,7 @@ def run(
     theme = {"dark": DARK, "light": LIGHT}.get(theme_name or "", system_theme())
     _, name = _SAMPLE_MODELS[family]
     popup = PopupWindow(theme)
+    popup.backdrop_source = lambda rect: None  # solid card: never put the real desktop in a screenshot
     if nearby:  # AirPods around but connected elsewhere, e.g. to an iPhone
         popup.set_action(Action.CONNECT)
     popup.present(build_view(sample_snapshot(family), name, connected=not nearby), duration_s=0)

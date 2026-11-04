@@ -53,7 +53,7 @@ class SettingsWindow(QWidget):
         popup = self._group(layout, "Popup")
         self._on_connect = self._check(popup, "Show when AirPods connect", "popup_on_connect")
         self._on_case = self._check(popup, "Show when the case opens", "popup_on_case_open")
-        self._intro = self._check(popup, "Play opening animation", "popup_intro_animation")
+        self._intro = self._check(popup, "Play the AirPods animation", "popup_intro_animation")
         self._duration = QDoubleSpinBox(suffix=" seconds", minimum=2, maximum=30, singleStep=1, decimals=0)
         self._duration.valueChanged.connect(lambda v: self._set("popup_duration_s", float(v)))
         popup.addRow("Stay on screen for", self._duration)

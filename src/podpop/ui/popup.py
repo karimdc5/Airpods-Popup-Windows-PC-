@@ -1,10 +1,23 @@
-"""The iPhone-style battery card that slides up from the bottom of the screen."""
+"""The battery HUD: a frosted dark card near the top of the screen.
+
+Top to bottom: the device name, the AirPods clip turning in a loop, a row of
+vertical battery capsules (left bud, case, right bud), and the connection
+status. It fades in while settling 8 px, stays a few seconds, and fades out
+the same way. There are no buttons; clicking the card connects the AirPods
+when they're not connected, and otherwise just closes it.
+
+Measurements follow the iOS HUD: 280 px wide, 26 px continuous corners,
+rgba(28,28,30,.74) over the blurred, saturated desktop, a 1 px inner
+hairline, and a soft 40 px shadow.
+"""
 
 from __future__ import annotations
 
 import ctypes
 import math
 import sys
+import time
+from collections.abc import Callable
 from enum import Enum
 
 from PySide6.QtCore import (
@@ -13,337 +26,330 @@ from PySide6.QtCore import (
     QPoint,
     QPointF,
     QPropertyAnimation,
+    QRect,
     QRectF,
     Qt,
     QTimer,
-    QVariantAnimation,
+    QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (
-    QAbstractButton,
-    QGraphicsDropShadowEffect,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QGraphicsDropShadowEffect, QVBoxLayout, QWidget
 
 from ..catalog import Family
-from ..presenter import LOW_LEVEL, DeviceView, ItemView
+from ..presenter import CRITICAL_LEVEL, LOW_LEVEL, DeviceView, ItemView
 from ..protocol import Part
-from .artwork import case_led, paint_bud, paint_case, paint_headphones
-from .intro import INTRO_MS, IntroOverlay
-from .theme import Theme, font
+from . import hud, turntable
+from .artwork import paint_headphones
+from .theme import DARK, Theme
 
+CARD_W = 280
+CARD_RADIUS = 26.0
+PADDING = (16, 20, 16, 18)  # left, top, right, bottom
+TITLE_PX = 17
+CLIP = 168
+CLIP_MARGIN = (4, 2)  # above, below
+GLYPH = 13.0
+CAPSULE_W, CAPSULE_H, CAPSULE_R = 9.0, 34.0, 5.0
+PERCENT_PX = 11
+COLUMN_GAP = 22
+STATUS_PX = 12
+STATUS_GAP = 12
 
-# iPhone layout: both buds side by side on the left, the case on the right,
-# a small battery icon and percentage under each.
-BUD_W = 74
-CASE_W = 150
-HEADPHONES_W = 200
-PAIR_GAP = 22  # between the buds and the case
-ART_H = 112
-PILL_W, PILL_H = 27.0, 12.5
-BATTERY_Y = ART_H + 14
-TILE_H = int(BATTERY_Y + PILL_H) + 6 + 18
-
-CARD_MARGINS = (20, 16, 20, 20)
-CARD_W = 2 * BUD_W + PAIR_GAP + CASE_W + CARD_MARGINS[0] + CARD_MARGINS[2]
-_DISPLAY_ORDER = {Part.LEFT: 0, Part.RIGHT: 1, Part.CASE: 2, None: 0}
-CARD_RADIUS = 28.0
+TOP_GAP = 96  # from the top of the work area
 SHADOW_MARGIN = 40
-SCREEN_GAP = 18  # distance between card and the bottom of the work area
-# The card rises this far while fading in. Kept under SCREEN_GAP so it never
-# starts behind the taskbar, which can stay above us after a tray click.
-ENTER_RISE = 14
-EXIT_DROP = 10
+ENTER_RISE = 8
+FADE_MS = 180
+BLUR_DOWNSCALE = 14  # ~28 px blur
+SATURATION = 1.8
 
-ENTER_MS = 560
-EXIT_MS = 220
-FILL_MS = 900
-FILL_STAGGER_MS = 90
-HOVER_GRACE_MS = 2500
-RESIZE_MS = 200
+FONTS = ["SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Arial"]
+
+BACKGROUND = QColor(28, 28, 30, 189)  # .74
+SOLID = QColor(28, 28, 30)  # when there is no desktop snapshot (older Windows, demos)
+HAIRLINE = QColor(255, 255, 255, 20)  # .08
+SHADOW = QColor(0, 0, 0, 115)  # .45
+TITLE = QColor(255, 255, 255, 250)  # .98
+TRACK = QColor(255, 255, 255, 41)  # .16
+PERCENT = QColor(255, 255, 255, 217)  # .85
+STATUS = QColor(255, 255, 255, 140)  # .55
+GLYPH_COLOR = QColor(255, 255, 255, 217)
+OK, WARN, LOW = QColor("#30D158"), QColor("#FFD60A"), QColor("#FF453A")
+
+_COLUMN_ORDER = {Part.LEFT: 0, Part.CASE: 1, Part.RIGHT: 2, None: 0}
 
 
 class Action(Enum):
-    """State of the Connect button at the bottom of the card."""
+    """What the link is doing; shown as the status line."""
 
-    HIDDEN = None
-    CONNECT = "Connect"
+    HIDDEN = "Connected"  # connected (or nothing to connect)
+    CONNECT = "Not connected"
     CONNECTING = "Connecting…"
-    FAILED = "Couldn’t connect · Try again"
+    FAILED = "Couldn’t connect"
 
 
-class ItemTile(QWidget):
-    """Artwork + battery icon + percentage for one part (left, right, case…)."""
+def battery_color(level: int | None, charging: bool) -> QColor:
+    """Green above 20%, yellow at 11-20%, red at 10% and below (green while charging)."""
+    if level is None or charging or level > LOW_LEVEL:
+        return OK
+    return LOW if level <= CRITICAL_LEVEL else WARN
 
-    def __init__(self, family: Family, part: Part | None, theme: Theme, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        width = HEADPHONES_W if family is Family.HEADPHONES else CASE_W if part is Part.CASE else BUD_W
-        self.setFixedSize(width, TILE_H)
-        self.family = family
-        self._theme = theme
-        self._item: ItemView | None = None
-        self._shown = 0.0
-        self.art_visible = True  # hidden while the intro animation draws it instead
 
-        self._anim = QVariantAnimation(self, duration=FILL_MS, easingCurve=QEasingCurve.Type.OutCubic)
-        self._anim.valueChanged.connect(self._on_anim)
-        self._delay = QTimer(self, singleShot=True)
-        self._delay.timeout.connect(self._anim.start)
+def _font(px: float, weight: QFont.Weight, tracking: float = 0.0) -> QFont:
+    f = QFont()
+    f.setFamilies(FONTS)
+    f.setPixelSize(round(px))
+    f.setWeight(weight)
+    f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    if tracking:
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, tracking)
+    return f
 
-    @property
-    def part(self) -> Part | None:
-        return self._item.part if self._item else None
 
-    @property
-    def item(self) -> ItemView | None:
-        return self._item
+def squircle(rect: QRectF, radius: float) -> QPainterPath:
+    """A rounded rect with continuous (superellipse) corners, like iOS, not circular arcs."""
+    reach = min(radius * 1.528, rect.width() / 2, rect.height() / 2)  # how far each corner's curve runs
+    n = 4.6  # superellipse exponent; 2 would be a quarter circle
+    steps = 16
+    # Corner centres, clockwise from top-right, with the direction of their outer edges.
+    corners = (
+        (rect.right() - reach, rect.top() + reach, 1, -1),
+        (rect.right() - reach, rect.bottom() - reach, 1, 1),
+        (rect.left() + reach, rect.bottom() - reach, -1, 1),
+        (rect.left() + reach, rect.top() + reach, -1, -1),
+    )
+    path = QPainterPath()
+    for k, (cx, cy, sx, sy) in enumerate(corners):
+        for i in range(steps + 1):
+            t = (i / steps) * math.pi / 2
+            a, b = (math.sin(t), math.cos(t)) if k % 2 == 0 else (math.cos(t), math.sin(t))
+            x = cx + sx * reach * a ** (2 / n)
+            y = cy + sy * reach * b ** (2 / n)
+            if k == 0 and i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+    path.closeSubpath()
+    return path
 
-    def art_rect(self) -> QRectF:
-        """Where this tile draws its artwork, in tile coordinates."""
-        w = float(self.width())
-        if self.family is Family.HEADPHONES:
-            return QRectF((w - 120) / 2, 8, 120, ART_H - 12)
-        if self.part is Part.CASE:
-            return QRectF((w - 112) / 2, 24, 112, ART_H - 26)
-        return QRectF(4, 6, w - 8, ART_H - 10)
 
-    def art_opacity(self) -> float:
-        item = self._item
-        if item is None or item.level is None:
-            return 0.38
-        return 0.6 if item.stale else 1.0
+class _Clip:
+    """The looping AirPods clip, decoded by Qt Multimedia; frames arrive as QImages."""
 
-    def set_theme(self, theme: Theme) -> None:
-        self._theme = theme
-        self.update()
+    def __init__(self, on_frame: Callable[[], None]) -> None:
+        self._on_frame = on_frame
+        self.frame: QImage | None = None
+        self.path = None
+        self.screen_blend = True  # black background: blend in screen mode
+        self._player = None
 
-    def set_item(self, item: ItemView, *, from_zero: bool = False, delay_ms: int = 0) -> None:
-        self._item = item
-        target = float(item.level or 0)
-        if from_zero:
-            self._shown = 0.0
-        self._delay.stop()
-        self._anim.stop()
-        if math.isclose(target, self._shown):
-            self.update()
+    def load(self, path) -> None:
+        if path == self.path:
             return
-        self._anim.setStartValue(self._shown)
-        self._anim.setEndValue(target)
-        self._delay.start(delay_ms)
-        self.update()
-
-    def _on_anim(self, value: float) -> None:
-        self._shown = float(value)
-        self.update()
-
-    def paintEvent(self, _event) -> None:
-        item, theme = self._item, self._theme
-        if item is None:
+        self.stop()
+        self.path, self.frame = path, None
+        if path is None:
             return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w = float(self.width())
+        from PySide6.QtMultimedia import QMediaPlayer, QVideoSink  # only needed with a clip
 
-        known = item.level is not None
-        if self.art_visible:
-            p.setOpacity(self.art_opacity())
-            paint_item_art(p, self.art_rect(), self.family, item, theme)
+        if self._player is None:
+            self._player = QMediaPlayer()
+            self._sink = QVideoSink()
+            self._player.setVideoSink(self._sink)
+            self._sink.videoFrameChanged.connect(self._frame)
+            self._player.setLoops(QMediaPlayer.Loops.Infinite)  # no audio output: muted
+        self._player.setSource(QUrl.fromLocalFile(str(path)))
 
-        p.setOpacity(0.6 if item.stale else 1.0)
-        charging = item.charging and known
-        bolt_w = 9.0 if charging else 0.0
-        pill = QRectF((w - PILL_W - bolt_w) / 2, BATTERY_Y, PILL_W, PILL_H)
-        low = known and item.level <= LOW_LEVEL and not item.charging
-        _paint_battery(p, pill, self._shown / 100 if known else 0.0, theme, low)
-        if charging:
-            _paint_bolt(p, QPointF(pill.right() + 7.5, pill.center().y()), theme.title, 0.8)
+    def play(self) -> None:
+        if self._player is not None and self.path is not None:
+            self._player.setPosition(0)
+            self._player.play()
 
-        p.setPen(theme.title if known else theme.subtitle)
-        p.setFont(font(12.5, QFont.Weight.DemiBold))
-        text = f"{round(self._shown)}%" if known else "—"
-        p.drawText(QRectF(0, pill.bottom() + 5, w, 18), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, text)
-        p.end()
+    def stop(self) -> None:
+        if self._player is not None:
+            self._player.pause()
 
-
-def paint_item_art(p: QPainter, rect: QRectF, family: Family, item: ItemView, theme: Theme, lid_open: float = 0.0) -> None:
-    if family is Family.HEADPHONES:
-        paint_headphones(p, rect, theme)
-    elif item.part is Part.CASE:
-        paint_case(p, rect, family, case_led(item.level, item.charging), theme, lid_open)
-    else:
-        paint_bud(p, rect, family, item.part is Part.LEFT, theme)
-
-
-def _paint_battery(p: QPainter, body: QRectF, fraction: float, theme: Theme, low: bool) -> None:
-    """The iOS status-bar battery: rounded body, a nub on the right, a fill bar."""
-    p.save()
-    p.setPen(QPen(theme.ring_track, 1.2))
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawRoundedRect(body, 3.6, 3.6)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(theme.ring_track)
-    p.drawRoundedRect(QRectF(body.right() + 1.2, body.center().y() - 2.4, 1.8, 4.8), 0.9, 0.9)
-    if fraction > 0.005:
-        inner = body.adjusted(2.0, 2.0, -2.0, -2.0)
-        inner.setWidth(max(inner.width() * min(fraction, 1.0), 2.0))
-        p.setBrush(theme.ring_low if low else theme.ring_ok)
-        p.drawRoundedRect(inner, 1.8, 1.8)
-    p.restore()
-
-
-def _paint_bolt(p: QPainter, center: QPointF, color: QColor, scale: float = 1.0) -> None:
-    p.save()
-    p.setPen(Qt.PenStyle.NoPen)
-    bolt = QPainterPath()
-    pts = [(1.2, -6.5), (-4.2, 1.0), (-0.4, 1.0), (-1.4, 6.5), (4.2, -1.2), (0.4, -1.2)]
-    bolt.moveTo(center + QPointF(pts[0][0] * scale, pts[0][1] * scale))
-    for x, y in pts[1:]:
-        bolt.lineTo(center + QPointF(x * scale, y * scale))
-    bolt.closeSubpath()
-    p.setBrush(color)
-    p.drawPath(bolt)
-    p.restore()
-
-
-class _CloseButton(QAbstractButton):
-    def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.theme = theme
-        self.setFixedSize(26, 26)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Close")
-
-    def enterEvent(self, event) -> None:
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self.update()
-        super().leaveEvent(event)
-
-    def paintEvent(self, _event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(self.theme.button_hover if self.underMouse() else self.theme.button)
-        p.drawEllipse(QRectF(self.rect()))
-        pen = QPen(self.theme.button_glyph, 1.8)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        c, d = QPointF(self.width() / 2, self.height() / 2), 4.2
-        p.drawLine(c + QPointF(-d, -d), c + QPointF(d, d))
-        p.drawLine(c + QPointF(-d, d), c + QPointF(d, -d))
-        p.end()
-
-
-class _GearButton(QAbstractButton):
-    """Small round settings button next to the close button."""
-
-    def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.theme = theme
-        self.setFixedSize(26, 26)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Settings")
-
-    def enterEvent(self, event) -> None:
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self.update()
-        super().leaveEvent(event)
-
-    def paintEvent(self, _event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(self.theme.button_hover if self.underMouse() else self.theme.button)
-        p.drawEllipse(QRectF(self.rect()))
-        c = QPointF(self.width() / 2, self.height() / 2)
-        gear = QPainterPath()
-        teeth, outer, inner = 8, 7.2, 5.4
-        for i in range(teeth * 2):
-            angle = math.pi * i / teeth
-            r = outer if i % 2 == 0 else inner
-            for da in (-0.17, 0.17):
-                point = c + QPointF(math.cos(angle + da) * r, math.sin(angle + da) * r)
-                gear.moveTo(point) if gear.elementCount() == 0 else gear.lineTo(point)
-        gear.closeSubpath()
-        hole = QPainterPath()
-        hole.addEllipse(c, 2.4, 2.4)
-        p.setBrush(self.theme.button_glyph)
-        p.drawPath(gear.subtracted(hole))
-        p.end()
-
-
-class _ActionButton(QAbstractButton):
-    """Full-width pill button, like the one on the iPhone popup."""
-
-    def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.theme = theme
-        self.action = Action.HIDDEN
-        self.setFixedHeight(42)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.hide()
-
-    def set_action(self, action: Action) -> None:
-        self.action = action
-        self.setVisible(action is not Action.HIDDEN)
-        self.setEnabled(action is not Action.CONNECTING)
-        self.update()
-
-    def enterEvent(self, event) -> None:
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self.update()
-        super().leaveEvent(event)
-
-    def paintEvent(self, _event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor(self.theme.accent)
-        if not self.isEnabled():
-            color.setAlphaF(0.55)
-        elif self.isDown():
-            color = color.darker(120)
-        elif self.underMouse():
-            color = color.lighter(112)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(color)
-        r = QRectF(self.rect())
-        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        p.setPen(QColor("#FFFFFF"))
-        p.setFont(font(15, QFont.Weight.DemiBold))
-        p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.action.value or "")
-        p.end()
+    def _frame(self, video_frame) -> None:
+        image = video_frame.toImage()
+        if image.isNull():
+            return
+        if self.frame is None:  # decide once per clip whether it carries transparency
+            self.screen_blend = image.pixelColor(0, 0).alpha() == 255
+        self.frame = image
+        self._on_frame()
 
 
 class _Card(QWidget):
-    def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.theme = theme
+    clicked = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedSize(CARD_W, self.content_height())
+        self.view: DeviceView | None = None
+        self.status = Action.HIDDEN.value
+        self.backdrop: QPixmap | None = None
+        self.animate = True
+        self._started = time.monotonic()
+        self._clip = _Clip(self.update)
+        self._tick = QTimer(self, interval=33)  # drives the fallback turntable
+        self._tick.timeout.connect(self.update)
+
+    @staticmethod
+    def content_height() -> int:
+        return round(PADDING[1] + TITLE_PX + 5 + CLIP_MARGIN[0] + CLIP + CLIP_MARGIN[1] + _battery_row_h()
+                     + STATUS_GAP + STATUS_PX + 3 + PADDING[3])
+
+    def set_view(self, view: DeviceView) -> None:
+        if self.view is None or self.view.family is not view.family:
+            self._clip.load(hud.clip_for(view.family))
+        self.view = view
+        self.update()
+
+    def start(self) -> None:
+        self._started = time.monotonic()
+        if not self.animate:
+            return
+        if self._clip.path is not None:
+            self._clip.play()
+        else:
+            self._tick.start()
+
+    def stop(self) -> None:
+        self._clip.stop()
+        self._tick.stop()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+
+    # ------------------------------------------------------------ painting
 
     def paintEvent(self, _event) -> None:
+        if self.view is None:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(self.theme.card_border, 1))
-        p.setBrush(self.theme.card)
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), CARD_RADIUS, CARD_RADIUS)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        w = float(self.width())
+        shape = squircle(QRectF(self.rect()), CARD_RADIUS)
+
+        # The card is always opaque inside its shape: the blurred desktop, or the
+        # solid fallback. A clip blended in screen mode needs that, or its black
+        # background would show as a darker square on a see-through card.
+        p.setClipPath(shape)
+        if self.backdrop is not None:
+            p.drawPixmap(QRectF(self.rect()), self.backdrop, QRectF(self.backdrop.rect()))
+        else:
+            p.fillPath(shape, SOLID)
+        p.fillPath(shape, BACKGROUND)
+        p.setClipping(False)
+        p.setPen(QPen(HAIRLINE, 1.0))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(squircle(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), CARD_RADIUS - 0.5))
+
+        y = float(PADDING[1])
+        title_font = _font(TITLE_PX, QFont.Weight.DemiBold, -0.2)
+        inner = w - PADDING[0] - PADDING[2]
+        title = QFontMetrics(title_font).elidedText(self.view.title, Qt.TextElideMode.ElideRight, int(inner))
+        p.setFont(title_font)
+        p.setPen(TITLE)
+        p.drawText(QRectF(PADDING[0], y, inner, TITLE_PX + 5), Qt.AlignmentFlag.AlignCenter, title)
+        y += TITLE_PX + 5 + CLIP_MARGIN[0]
+
+        self._paint_clip(p, QRectF((w - CLIP) / 2, y, CLIP, CLIP))
+        y += CLIP + CLIP_MARGIN[1]
+
+        items = sorted(self.view.items, key=lambda i: _COLUMN_ORDER[i.part])
+        column_w = 30.0  # wide enough for "100%"
+        row_w = len(items) * column_w + (len(items) - 1) * COLUMN_GAP
+        x = (w - row_w) / 2
+        for item in items:
+            self._paint_column(p, x + column_w / 2, y, item, self.view.family)
+            x += column_w + COLUMN_GAP
+        y += _battery_row_h() + STATUS_GAP
+
+        p.setFont(_font(STATUS_PX, QFont.Weight.Normal))
+        p.setPen(STATUS)
+        p.drawText(QRectF(0, y, w, STATUS_PX + 4), Qt.AlignmentFlag.AlignCenter, self.status)
         p.end()
+
+    def _paint_clip(self, p: QPainter, box: QRectF) -> None:
+        frame = self._clip.frame
+        if frame is not None:
+            p.save()
+            if self._clip.screen_blend:
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+            p.drawImage(_fit(box, frame.width(), frame.height()), frame)
+            p.restore()
+            return
+        sprites = turntable.frames(self.view.family, "buds")
+        if sprites:
+            elapsed = time.monotonic() - self._started if self.animate else 0.0
+            sprite = sprites[int(elapsed / turntable.TURN_S % 1.0 * turntable.FRAMES)]
+            p.drawPixmap(_fit(box, sprite.width(), sprite.height()), sprite, QRectF(sprite.rect()))
+        elif self.view.family is Family.HEADPHONES:
+            paint_headphones(p, box.adjusted(18, 22, -18, -22), DARK)
+
+    def _paint_column(self, p: QPainter, cx: float, top: float, item: ItemView, family: Family) -> None:
+        _paint_glyph(p, QRectF(cx - GLYPH / 2, top, GLYPH, GLYPH), item.part, family)
+
+        capsule = QRectF(cx - CAPSULE_W / 2, top + GLYPH + 6, CAPSULE_W, CAPSULE_H)
+        path = QPainterPath()
+        path.addRoundedRect(capsule, CAPSULE_R, CAPSULE_R)
+        p.fillPath(path, TRACK)
+        known = item.level is not None
+        if known and item.level > 0:
+            fill_h = CAPSULE_H * min(item.level, 100) / 100
+            p.save()
+            p.setClipPath(path)
+            fill = QRectF(capsule.left(), capsule.bottom() - fill_h, CAPSULE_W, fill_h)  # anchored at the bottom
+            p.fillRect(fill, battery_color(item.level, item.charging))
+            p.restore()
+
+        p.setFont(_font(PERCENT_PX, QFont.Weight.Medium))
+        p.setPen(PERCENT)
+        text = f"{item.level}%" if known else "—"
+        p.drawText(QRectF(cx - 30, capsule.bottom() + 5, 60, PERCENT_PX + 4), Qt.AlignmentFlag.AlignCenter, text)
+
+
+def _battery_row_h() -> float:
+    return GLYPH + 6 + CAPSULE_H + 5 + PERCENT_PX + 3
+
+
+def _fit(box: QRectF, w: int, h: int) -> QRectF:
+    """object-fit: contain."""
+    scale = min(box.width() / w, box.height() / h)
+    fw, fh = w * scale, h * scale
+    return QRectF(box.center().x() - fw / 2, box.center().y() - fh / 2, fw, fh)
+
+
+def _paint_glyph(p: QPainter, r: QRectF, part: Part | None, family: Family) -> None:
+    """Tiny monochrome symbols: left bud, case, right bud, or headphones."""
+    p.save()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(GLYPH_COLOR)
+    if family is Family.HEADPHONES or part is None:
+        band = QPainterPath(QPointF(r.left() + 2.2, r.top() + 8))
+        band.cubicTo(r.left() + 2.2, r.top() - 1, r.right() - 2.2, r.top() - 1, r.right() - 2.2, r.top() + 8)
+        p.strokePath(band, QPen(GLYPH_COLOR, 1.6))
+        p.drawRoundedRect(QRectF(r.left() + 0.5, r.top() + 6.5, 4, 6), 1.6, 1.6)
+        p.drawRoundedRect(QRectF(r.right() - 4.5, r.top() + 6.5, 4, 6), 1.6, 1.6)
+    elif part is Part.CASE:
+        body = QRectF(r.left() + 0.5, r.top() + 2.5, r.width() - 1, r.height() - 4)
+        p.drawRoundedRect(body, 3.5, 3.5)
+        p.fillRect(QRectF(body.left(), body.top() + 3.4, body.width(), 0.9), QColor(28, 28, 30, 200))  # lid seam
+    else:
+        left = part is Part.LEFT
+        head_x = r.left() + (4.2 if left else r.width() - 4.2)
+        p.drawEllipse(QPointF(head_x, r.top() + 4.2), 3.6, 3.6)
+        stem_x = head_x + (-1.6 if left else 1.6) - 1.0
+        p.drawRoundedRect(QRectF(stem_x, r.top() + 5, 2.0, 7.8), 1.0, 1.0)
+    p.restore()
 
 
 class PopupWindow(QWidget):
     dismissed = Signal()
     connect_clicked = Signal()
-    settings_clicked = Signal()
 
     def __init__(self, theme: Theme) -> None:
         super().__init__(
@@ -356,151 +362,71 @@ class PopupWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self._theme = theme
         self.follow_cursor = False  # True: open on the monitor under the mouse, else the primary one
-        self.intro_enabled = True  # play the case-opening animation when the card appears
-        self._view: DeviceView | None = None
-        self._duration_ms = 0
+        # What the glass shows: by default a snapshot of the desktop behind the card.
+        # Demos and screenshots pass their own so no real desktop ends up in an image.
+        self.backdrop_source: Callable[[QRect], QPixmap | None] | None = None
+        self._action = Action.HIDDEN
         self._leaving = False
+        self._anim: QParallelAnimationGroup | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN)
-        self._card = _Card(theme)
-        self._card.setFixedWidth(CARD_W)
+        self._card = _Card()
+        self._card.clicked.connect(self._on_click)
         outer.addWidget(self._card)
-        self._shadow = QGraphicsDropShadowEffect(blurRadius=50, offset=QPointF(0, 12))
-        self._card.setGraphicsEffect(self._shadow)
-
-        layout = QVBoxLayout(self._card)
-        layout.setContentsMargins(*CARD_MARGINS)
-        layout.setSpacing(10)
-
-        # Title centred like iOS, settings on the left and close on the right.
-        header = QHBoxLayout()
-        header.setSpacing(8)
-        self._gear = _GearButton(theme)
-        self._gear.clicked.connect(self.settings_clicked)
-        header.addWidget(self._gear, 0, Qt.AlignmentFlag.AlignTop)
-        text = QVBoxLayout()
-        text.setSpacing(2)
-        self._title = QLabel(alignment=Qt.AlignmentFlag.AlignHCenter)
-        self._title.setFont(font(19, QFont.Weight.Bold))
-        self._subtitle = QLabel(alignment=Qt.AlignmentFlag.AlignHCenter)
-        self._subtitle.setFont(font(12))
-        text.addSpacing(6)
-        text.addWidget(self._title)
-        text.addWidget(self._subtitle)
-        header.addLayout(text, 1)
-        self._close = _CloseButton(theme)
-        self._close.clicked.connect(self.dismiss)
-        header.addWidget(self._close, 0, Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(header)
-
-        self._tiles_row = QHBoxLayout()
-        self._tiles_row.setSpacing(0)
-        layout.addLayout(self._tiles_row)
-        self._tiles: list[ItemTile] = []
-
-        self._action = _ActionButton(theme)
-        self._action.clicked.connect(self.connect_clicked)
-        layout.addSpacing(2)
-        layout.addWidget(self._action)
-
-        self._intro = IntroOverlay(self._card)
+        self._card.setGraphicsEffect(QGraphicsDropShadowEffect(blurRadius=40, offset=QPointF(0, 12), color=SHADOW))
 
         self._hide_timer = QTimer(self, singleShot=True)
         self._hide_timer.timeout.connect(self.dismiss)
-        self._anim: QParallelAnimationGroup | None = None
-        self._apply_theme()
 
     # ----------------------------------------------------------------- API
 
+    @property
+    def intro_enabled(self) -> bool:
+        return self._card.animate
+
+    @intro_enabled.setter
+    def intro_enabled(self, value: bool) -> None:
+        self._card.animate = value  # play the AirPods clip, or hold its first frame
+
     def present(self, view: DeviceView, duration_s: float) -> None:
-        """Show (or refresh) the card; ``duration_s <= 0`` keeps it open until closed."""
-        self._duration_ms = int(duration_s * 1000)
-        entering = not self.isVisible() or self._leaving
-        intro = entering and self.intro_enabled
-        self._apply_view(view, from_zero=entering, fill_delay_ms=int(INTRO_MS * 0.7) if intro else 150)
-        if entering:
+        """Show (or refresh) the card; ``duration_s <= 0`` keeps it until clicked."""
+        self._card.set_view(view)
+        if not self.isVisible() or self._leaving:
             self._enter()
-            if intro:
-                self._card.layout().activate()
-                stage = QRectF(self._tiles_row.geometry()).adjusted(0, -6, 0, 4)
-                self._intro.play(self._tiles, self._theme, stage)
-        self._restart_hide_timer(self._duration_ms)
+        ms = int(duration_s * 1000)
+        if ms > 0:
+            self._hide_timer.start(ms)
+        else:
+            self._hide_timer.stop()
 
     def update_view(self, view: DeviceView) -> None:
         if self.isVisible() and not self._leaving:
-            self._apply_view(view, from_zero=False)
+            self._card.set_view(view)
 
     def dismiss(self) -> None:
         if not self.isVisible() or self._leaving:
             return
         self._leaving = True
         self._hide_timer.stop()
-        self._intro.stop()
-        self._animate(
-            self.pos() + QPoint(0, EXIT_DROP), 0.0, EXIT_MS, QEasingCurve.Type.InCubic, on_done=self._finish_dismiss
-        )
+        self._animate(self.pos() + QPoint(0, ENTER_RISE), 0.0, QEasingCurve.Type.InCubic, on_done=self._finish_dismiss)
 
     def set_theme(self, theme: Theme) -> None:
-        self._theme = theme
-        self._apply_theme()
+        pass  # the HUD is always the dark material, like iOS
 
     def set_action(self, action: Action) -> None:
-        if action is self._action.action:
-            return
-        self._action.set_action(action)
-        self._reanchor()
+        self._action = action
+        self._card.status = action.value
+        self._card.update()
 
     # ------------------------------------------------------------ internals
 
-    def _apply_theme(self) -> None:
-        t = self._theme
-        self._card.theme = t
-        self._close.theme = t
-        self._gear.theme = t
-        self._action.theme = t
-        self._shadow.setColor(t.shadow)
-        self._title.setStyleSheet(f"color: {t.title.name()}; background: transparent;")
-        self._subtitle.setStyleSheet(f"color: {t.subtitle.name()}; background: transparent;")
-        for tile in self._tiles:
-            tile.set_theme(t)
-        self._intro.set_theme(t)
-        self._card.update()
-
-    def _apply_view(self, view: DeviceView, *, from_zero: bool, fill_delay_ms: int = 150) -> None:
-        self._view = view
-        title_width = CARD_W - CARD_MARGINS[0] - CARD_MARGINS[2] - self._close.width() - self._gear.width() - 16
-        self._title.setText(QFontMetrics(self._title.font()).elidedText(view.title, Qt.TextElideMode.ElideRight, title_width))
-        self._title.setToolTip(view.title)
-        self._subtitle.setText(view.subtitle)
-
-        items = sorted(view.items, key=lambda i: _DISPLAY_ORDER[i.part])
-        layout_key = [(view.family, i.part) for i in items]
-        if layout_key != [(t.family, t.part) for t in self._tiles] or from_zero:
-            self._intro.stop()  # it animates the old tiles
-            self._rebuild_tiles(view.family, items)
-        for index, (tile, item) in enumerate(zip(self._tiles, items)):
-            delay = fill_delay_ms + index * FILL_STAGGER_MS if from_zero else 0
-            tile.set_item(item, from_zero=from_zero, delay_ms=delay)
-        self._reanchor()
-
-    def _rebuild_tiles(self, family: Family, items: list[ItemView]) -> None:
-        while self._tiles_row.count():
-            child = self._tiles_row.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        self._tiles = [ItemTile(family, item.part, self._theme) for item in items]
-        self._tiles_row.addStretch(1)
-        for tile in self._tiles:
-            if tile.part is Part.CASE:
-                self._tiles_row.addSpacing(PAIR_GAP)
-            self._tiles_row.addWidget(tile)
-            # A widget added to a visible window is shown only on a later event
-            # loop pass; until then the layout measures the card without it.
-            tile.show()
-        self._tiles_row.addStretch(1)
+    def _on_click(self) -> None:
+        if self._action in (Action.CONNECT, Action.FAILED):
+            self.connect_clicked.emit()
+        else:
+            self.dismiss()
 
     def _target_pos(self) -> QPoint:
         screen = QGuiApplication.primaryScreen()
@@ -508,60 +434,48 @@ class PopupWindow(QWidget):
             screen = QGuiApplication.screenAt(QCursor.pos()) or screen
         area = screen.availableGeometry()
         self.adjustSize()
-        x = area.center().x() - self.width() // 2
-        y = area.bottom() - self.height() + SHADOW_MARGIN - SCREEN_GAP
-        return QPoint(x, y)
-
-    def _reanchor(self) -> None:
-        """Keep the card's bottom edge in place when its height changes."""
-        old_height = self.height()
-        self.adjustSize()
-        if self.height() != old_height:
-            self._retarget()
-
-    def _retarget(self) -> None:
-        if not self.isVisible() or self._leaving:
-            return
-        entering = self._anim is not None and self._anim.state() == QParallelAnimationGroup.State.Running
-        if entering:
-            self._enter()  # retarget the running entrance
-        elif self.pos() != self._target_pos():
-            self._animate(self._target_pos(), 1.0, RESIZE_MS, QEasingCurve.Type.OutCubic)
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        QTimer.singleShot(0, self._retarget)  # re-check once the layout has settled
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        # Safety net: whatever changed the height, the card's bottom edge
-        # must stay above the taskbar.
-        if event.oldSize().isValid() and event.oldSize().height() != event.size().height():
-            QTimer.singleShot(0, self._retarget)
+        return QPoint(area.center().x() - self.width() // 2, area.top() + TOP_GAP - SHADOW_MARGIN)
 
     def _enter(self) -> None:
         self._leaving = False
         target = self._target_pos()
         if not self.isVisible():
+            self._card.backdrop = self._grab_backdrop(target)
             self.move(target + QPoint(0, ENTER_RISE))
             self.setWindowOpacity(0.0)
             self.show()
         self.raise_()
         _bring_to_front(self)
-        curve = QEasingCurve(QEasingCurve.Type.OutBack)
-        curve.setOvershoot(0.9)
-        self._animate(target, 1.0, ENTER_MS, curve)
+        self._card.start()
+        self._animate(target, 1.0, QEasingCurve.Type.OutCubic)
 
-    def _animate(self, pos: QPoint, opacity: float, ms: int, curve, on_done=None) -> None:
+    def _grab_backdrop(self, target: QPoint) -> QPixmap | None:
+        """The desktop where the card will rest, blurred and saturated (we're not on screen yet)."""
+        card = QRect(target + QPoint(SHADOW_MARGIN, SHADOW_MARGIN), self._card.size())
+        if self.backdrop_source is not None:
+            shot = self.backdrop_source(card)
+        else:
+            screen = QGuiApplication.screenAt(card.center()) or QGuiApplication.primaryScreen()
+            local = card.translated(-screen.geometry().topLeft())
+            shot = screen.grabWindow(0, local.x(), local.y(), local.width(), local.height())
+        if shot is None or shot.isNull():
+            return None
+        smooth = Qt.TransformationMode.SmoothTransformation
+        small = shot.toImage().convertToFormat(QImage.Format.Format_RGB32).scaled(
+            max(1, shot.width() // BLUR_DOWNSCALE), max(1, shot.height() // BLUR_DOWNSCALE),
+            Qt.AspectRatioMode.IgnoreAspectRatio, smooth,
+        )
+        _saturate(small, SATURATION)
+        # Back up in a couple of smooth steps: close to a gaussian blur.
+        mid = small.scaled(small.width() * 4, small.height() * 4, Qt.AspectRatioMode.IgnoreAspectRatio, smooth)
+        return QPixmap.fromImage(mid)
+
+    def _animate(self, pos: QPoint, opacity: float, curve, on_done=None) -> None:
         if self._anim is not None:
             self._anim.stop()  # stop() doesn't emit finished, so no stale on_done runs
-        group = QParallelAnimationGroup()  # owned by self._anim; freed when replaced
-        move = QPropertyAnimation(self, b"pos", duration=ms, easingCurve=curve, endValue=pos)
-        fade = QPropertyAnimation(
-            self, b"windowOpacity", duration=min(ms, 280), easingCurve=QEasingCurve.Type.OutCubic, endValue=opacity
-        )
-        group.addAnimation(move)
-        group.addAnimation(fade)
+        group = QParallelAnimationGroup()
+        group.addAnimation(QPropertyAnimation(self, b"pos", duration=FADE_MS, easingCurve=curve, endValue=pos))
+        group.addAnimation(QPropertyAnimation(self, b"windowOpacity", duration=FADE_MS, easingCurve=curve, endValue=opacity))
         if on_done is not None:
             group.finished.connect(on_done)
         self._anim = group
@@ -569,22 +483,19 @@ class PopupWindow(QWidget):
 
     def _finish_dismiss(self) -> None:
         self.hide()
+        self._card.stop()
         self._leaving = False
         self.dismissed.emit()
 
-    def _restart_hide_timer(self, ms: int) -> None:
-        self._hide_timer.stop()
-        if ms > 0 and not self.underMouse():
-            self._hide_timer.start(ms)
 
-    def enterEvent(self, event) -> None:
-        self._hide_timer.stop()  # don't vanish while the user is looking at it
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        if self._duration_ms > 0:
-            self._restart_hide_timer(max(HOVER_GRACE_MS, self._hide_timer.remainingTime()))
-        super().leaveEvent(event)
+def _saturate(image: QImage, amount: float) -> None:
+    """In place; the image is tiny (the blur shrank it), so per-pixel is cheap."""
+    for y in range(image.height()):
+        for x in range(image.width()):
+            c = image.pixelColor(x, y)
+            r, g, b = c.redF(), c.greenF(), c.blueF()
+            grey = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            image.setPixelColor(x, y, QColor.fromRgbF(*(min(1.0, max(0.0, grey + (v - grey) * amount)) for v in (r, g, b))))
 
 
 _HWND_TOPMOST = -1

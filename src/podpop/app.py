@@ -113,7 +113,6 @@ class PodPopApp(QObject):
         self._settings_window = SettingsWindow(settings, self._save_settings)
         self._settings_window.changed.connect(self._apply_settings)
         self._tray.settings_requested.connect(self.open_settings)
-        self._popup.settings_clicked.connect(self.open_settings)
         self._tray.show_requested.connect(self.show_popup)
         self._tray.connect_requested.connect(self.connect_device)
         self._tray.repair_requested.connect(self.repair_audio)

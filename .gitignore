@@ -5,3 +5,6 @@ build/
 dist/
 *.spec
 .pytest_cache/
+
+# Personal HUD clips (see src/podpop/ui/hud.py); never commit them
+src/podpop/assets/hud/

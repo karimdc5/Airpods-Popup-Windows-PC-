@@ -18,6 +18,7 @@ New-Item -ItemType Directory -Force build | Out-Null
     --name PodPop `
     --icon build\podpop.ico `
     --paths src `
+    --add-data "src\podpop\assets;podpop\assets" `
     --collect-submodules winrt `
     --collect-submodules bleak `
     --hidden-import comtypes.stream `

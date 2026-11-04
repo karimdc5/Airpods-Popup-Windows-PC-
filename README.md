@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="460" alt="PodPop opening animation: the case spins, opens, the buds glide out and the batteries fill">
+  <img src="docs/images/demo.gif" width="460" alt="PodPop popup: 3D AirPods and case slowly spinning above the battery levels">
 </p>
 
 ## Why PodPop?
@@ -72,15 +72,18 @@ already paired in *Settings → Bluetooth & devices*.
   plays nothing after you walk away and come back. PodPop notices and reopens
   the audio link.
 - **Low-battery alerts** at 20% and 10%.
-- **Artwork for each model**: AirPods 1–4, Pro, Pro 2 and Max, plus Beats.
-  An iPhone-style card with light and dark themes, and an opening animation
-  where the case spins, the lid opens and the buds glide out.
+- **An iOS-style battery HUD**: a frosted dark card near the top of the
+  screen with the AirPods turning in 3D, a battery capsule for each bud and
+  the case, and the connection status. It fades in, stays 4 seconds, and fades
+  out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. The 3D models
+  are PodPop's own, rendered by [`scripts/render_turntable.py`](scripts/render_turntable.py),
+  and you can [use your own clip](#use-your-own-hud-clip) instead.
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
   battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
   audio, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> hands the AirPods to
   your phone.
-- **Settings window** (⚙ on the popup, or right-click the tray icon). Every
-  feature above can be switched on or off, and changes apply immediately.
+- **Settings window** (right-click the tray icon → Settings). Every feature
+  above can be switched on or off, and changes apply immediately.
 
 <br clear="right">
 
@@ -94,9 +97,6 @@ already paired in *Settings → Bluetooth & devices*.
   <tr>
     <td align="center"><img src="docs/images/popup-dark.png" width="260" alt="AirPods Pro"><br><sub>AirPods Pro / Pro 2</sub></td>
     <td align="center"><img src="docs/images/popup-max.png" width="260" alt="AirPods Max"><br><sub>AirPods Max</sub></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="docs/images/popup-light.png" width="260" alt="Light mode"><br><sub>Light mode</sub></td>
   </tr>
 </table>
 
@@ -132,7 +132,8 @@ lie about each other, rotating addresses, a case that goes quiet when closed).
 | `ear.py` / `media.py` | In-ear changes → pause/resume through Windows media sessions. |
 | `handoff.py` / `idle.py` | Releases the AirPods to your phone when you step away from the PC. Pure and tested. |
 | `autostart.py` | Start at sign-in through a per-user Task Scheduler task. |
-| `ui/` | Popup card, vector artwork, opening animation, tray icon, settings window. |
+| `ui/` | Popup card, 3D turntable player, vector artwork (AirPods Max, tray icon), settings window. |
+| `scripts/render_turntable.py` | Models the AirPods and cases as signed distance fields and ray-marches the 3D turntable frames with numpy. |
 | `app.py` | Wires everything together on the Qt thread. |
 
 ### What AirPods don't broadcast
@@ -158,15 +159,26 @@ python -m venv .venv
 Handy for development:
 
 ```powershell
-.\.venv\Scripts\python -m podpop --demo pro --theme light   # popup with sample data, no AirPods needed
+.\.venv\Scripts\python -m podpop --demo pro                 # popup with sample data, no AirPods needed
 .\.venv\Scripts\python -m podpop --demo pro --nearby        # the "Connect" state
 .\.venv\Scripts\python -m podpop --sniff                    # print decoded adverts live
 .\.venv\Scripts\python -m podpop --debug                    # verbose logging
 .\.venv\Scripts\python scripts\make_demo_gif.py             # re-record docs/images/demo.gif
+.\.venv\Scripts\python scripts
+ender_turntable.py          # re-render the 3D frames (needs numpy)
 ```
 
 Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
 `%LOCALAPPDATA%\PodPop\logs`.
+
+## Use your own HUD clip
+
+PodPop's popup can play a short video loop of the AirPods instead of its own
+3D turntable. PodPop doesn't ship any Apple artwork, but if you have a clip
+for personal use, drop it in `%APPDATA%\PodPop\hud\` named after the model:
+`airpodsPro`, `airpods`, `airpods3` or `airpodsMax`, as `.mov` or `.mp4`.
+A clip on a black background blends straight into the dark card. Restart
+PodPop to pick it up.
 
 ## Uninstall
 Right-click the tray icon → **Settings** → untick **Start with Windows**, quit

@@ -10,7 +10,8 @@ from .runtime import format_time_left
 from .protocol import Part
 from .state import Component, Snapshot
 
-LOW_LEVEL = 20  # iOS turns the battery ring red at this level
+LOW_LEVEL = 20  # iOS turns the battery yellow at this level...
+CRITICAL_LEVEL = 10  # ...and red at this one
 
 _NAME_SUFFIX = re.compile(r"\s+-\s+(Find My|Hands-Free.*|Stereo|Avrcp Transport)$", re.I)
 
@@ -55,12 +56,11 @@ def build_view(
     model = snapshot.model or guess_from_name(device_name or "")
     title = clean_device_name(device_name) if device_name else model.name
 
-    status = "Connected" if connected else ("Nearby" if snapshot.has_fresh_data else "Searching…")
+    # Like iOS: the device's name on top, its model underneath.
     time_left = format_time_left(minutes_left) if connected else None
+    subtitle = model.name if snapshot.has_fresh_data or connected else "Searching…"
     if time_left:
-        subtitle = f"{status} · {time_left}"  # the model is in the title's tooltip
-    else:
-        subtitle = f"{model.name} · {status}" if model.name != title else status
+        subtitle = f"{subtitle} · {time_left}"
 
     if model.family is Family.HEADPHONES:
         pod = snapshot.left if snapshot.left.known else snapshot.right

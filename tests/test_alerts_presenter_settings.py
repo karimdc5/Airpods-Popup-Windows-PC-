@@ -51,7 +51,7 @@ def test_clean_device_name():
 def test_view_for_buds():
     view = build_view(snap(left=100, right=60, case=70), "karim’s AirPods Pro #2 - Find My", connected=True)
     assert view.title == "karim’s AirPods Pro #2"
-    assert view.subtitle == "AirPods Pro 2 (USB-C) · Connected"
+    assert view.subtitle == "AirPods Pro 2 (USB-C)"
     assert [i.label for i in view.items] == ["Left", "Case", "Right"]
     assert view.lowest_pod_level == 60
 
@@ -60,7 +60,7 @@ def test_view_for_headphones_has_one_battery():
     view = build_view(snap(right=50, model=0x200A), None, connected=False)
     assert view.family is Family.HEADPHONES
     assert [(i.label, i.level) for i in view.items] == [("Battery", 50)]
-    assert view.subtitle == "Nearby"
+    assert view.subtitle == "AirPods Max"
 
 
 def test_view_before_any_advert_uses_name():
@@ -96,7 +96,7 @@ def test_settings_missing_or_corrupt(tmp_path):
 
 def test_view_shows_time_left_when_connected():
     view = build_view(snap(left=100, right=60, case=70), "My AirPods", connected=True, minutes_left=222)
-    assert view.subtitle == "Connected · About 3h 40m left"
+    assert view.subtitle == "AirPods Pro 2 (USB-C) · About 3h 40m left"
     assert view.summary().endswith("About 3h 40m left")
     nearby = build_view(snap(left=100, right=60, case=70), "My AirPods", connected=False, minutes_left=222)
     assert "left" not in nearby.subtitle

@@ -38,7 +38,7 @@ class Settings:
     hotkey_show_popup: str = "Ctrl+Alt+A"
     hotkey_connect: str = "Ctrl+Alt+C"  # connect, or fix stuck audio if already connected
     hotkey_handoff: str = "Ctrl+Alt+P"  # hand the AirPods to your phone now
-    popup_duration_s: float = 7.0
+    popup_duration_s: float = 4.0
     popup_follows_mouse: bool = False  # False: always on the primary monitor
     popup_intro_animation: bool = True  # case pulls back, opens, buds come out
     theme: str = "dark"  # "dark", "light" or "system" (follow Windows)

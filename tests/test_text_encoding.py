@@ -1,8 +1,9 @@
 """Guards against text damaged by a wrong encoding round trip.
 
-Reading a UTF-8 file as ANSI and writing it back as UTF-8 turns "…" into
-"â€¦", and an unescaped backslash in an edit script can drop a control
-character (a tab or carriage return) into the middle of a line. Both have
+Reading a UTF-8 file as ANSI and writing it back as UTF-8 turns an ellipsis
+or a curly quote into a three-character jumble starting with a-circumflex,
+and an unescaped backslash in an edit script can drop a control character
+(a tab or carriage return) into the middle of a line. Both have
 happened here once; these tests stop them coming back silently.
 """
 
@@ -31,6 +32,8 @@ def _tracked_text_files():
 def test_no_double_encoded_punctuation():
     damaged = []
     for path in _tracked_text_files():
+        if path.name == Path(__file__).name:
+            continue  # spells the patterns out (as escapes, but still)
         text = path.read_text(encoding="utf-8")
         damaged += [f"{path.relative_to(ROOT)}: {m!r}" for m in MOJIBAKE if m in text]
     assert not damaged, damaged
@@ -42,8 +45,9 @@ def test_no_byte_order_marks_or_stray_control_characters():
         raw = path.read_bytes()
         if raw.startswith(b"\xef\xbb\xbf"):
             problems.append(f"{path.relative_to(ROOT)}: byte order mark")
-        allowed = {"\n", "\t"} | ({"\r"} if path.suffix == ".ps1" else set())
+        allowed = {"\t"}
         for number, line in enumerate(raw.decode("utf-8").split("\n"), 1):
+            line = line.removesuffix("\r")  # Windows line endings are fine; a "\r" mid-line isn't
             if path.suffix == ".md" and "\t" in line:
                 problems.append(f"{path.relative_to(ROOT)}:{number}: tab")
             bad = [c for c in line if ord(c) < 32 and c not in allowed]

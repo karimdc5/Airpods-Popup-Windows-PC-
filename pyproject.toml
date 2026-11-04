@@ -31,6 +31,10 @@ dependencies = [
     "winrt-Windows.Media.Control>=2.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/karimdc5/Airpods-Popup-Windows-PC-"
+Issues = "https://github.com/karimdc5/Airpods-Popup-Windows-PC-/issues"
+
 [project.optional-dependencies]
 dev = ["pytest>=8", "pyinstaller>=6"]
 

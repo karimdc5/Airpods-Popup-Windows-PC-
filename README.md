@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/karimdc5/Airpods-Popup-Windows-PC-/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/karimdc5/Airpods-Popup-Windows-PC-/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white">
   <img alt="Qt for Python" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
@@ -118,8 +119,8 @@ audio connection goes through the Windows Core Audio COM APIs.
 ## Build from source
 
 ```powershell
-git clone <this repo's URL>
-cd <repo folder>
+git clone https://github.com/karimdc5/Airpods-Popup-Windows-PC-.git
+cd Airpods-Popup-Windows-PC-
 python -m venv .venv
 .\.venv\Scripts\pip install -e ".[dev]"
 

@@ -6,8 +6,10 @@ invisible. Timeline (fractions of INTRO_MS):
 
     0.00-0.40  starts as a close-up of the case (cropped by the card) and the
                camera pulls back and up to frame it
-    0.22-0.42  lid swings open while the camera settles
-    0.40-0.60  buds rise up out of the case
+    0.00-0.30  the case spins one full turn, like on a turntable, ending
+               face-on (the LED only shows while the front faces you)
+    0.28-0.46  lid swings open while the camera settles
+    0.44-0.62  buds rise up out of the case
     0.56-0.88  buds glide out to the left and right tiles; case shrinks into place
     0.82-0.98  lid closes
 """
@@ -22,10 +24,10 @@ from PySide6.QtWidgets import QWidget
 
 from ..catalog import Family
 from ..protocol import Part
-from .artwork import case_well, paint_bud
+from .artwork import Led, case_led, case_well, paint_bud, paint_case, paint_headphones
 from .theme import Theme
 
-INTRO_MS = 1800
+INTRO_MS = 2000
 
 _EASE_OUT = QEasingCurve(QEasingCurve.Type.OutCubic)
 _EASE_IN_OUT = QEasingCurve(QEasingCurve.Type.InOutCubic)
@@ -42,6 +44,18 @@ def _lerp(a: float, b: float, t: float) -> float:
 def _scaled(rect: QRectF, scale: float, center: QPointF) -> QRectF:
     w, h = rect.width() * scale, rect.height() * scale
     return QRectF(center.x() - w / 2, center.y() - h / 2, w, h)
+
+
+def _spin(t: float, end: float) -> float:
+    """Turntable angle: one full turn that slows into face-on by ``end``."""
+    return -2 * math.pi * (1 - _EASE_OUT.valueForProgress(_seg(t, 0.0, end)))
+
+
+def _turned(p: QPainter, center: QPointF, angle: float) -> None:
+    """Squash horizontally as if turned ``angle`` around the vertical axis."""
+    p.translate(center)
+    p.scale(max(abs(math.cos(angle)), 0.04), 1.0)
+    p.translate(-center)
 
 
 def _lerp_rect(a: QRectF, b: QRectF, t: float) -> QRectF:
@@ -124,20 +138,29 @@ class IntroOverlay(QWidget):
         family = self._tiles[0].family
 
         if family is Family.HEADPHONES or Part.CASE not in tiles:
+            angle = _spin(t, 0.5)
             for tile in tiles.values():
                 target = self._target(tile)
                 scale = _lerp(1.35, 1.0, _EASE_OUT.valueForProgress(_seg(t, 0.0, 0.6)))
-                p.setOpacity(fade * tile.art_opacity())
-                paint_item_art(p, _scaled(target, scale, target.center()), family, tile.item, theme)
+                rect = _scaled(target, scale, target.center())
+                p.save()
+                p.setOpacity(fade * tile.art_opacity() * (0.8 + 0.2 * abs(math.cos(angle))))
+                if family is Family.HEADPHONES:
+                    _turned(p, rect.center(), angle)
+                    paint_headphones(p, rect, theme)
+                else:
+                    paint_item_art(p, rect, family, tile.item, theme)
+                p.restore()
             p.end()
             return
 
         case_tile = tiles[Part.CASE]
         case_target = self._target(case_tile)
         pull_back = _EASE_IN_OUT.valueForProgress(_seg(t, 0.0, 0.40))
-        lid = _EASE_IN_OUT.valueForProgress(_seg(t, 0.22, 0.42)) * (1 - _EASE_IN_OUT.valueForProgress(_seg(t, 0.82, 0.98)))
-        rise = _EASE_OUT.valueForProgress(_seg(t, 0.40, 0.60))
-        fly = _EASE_IN_OUT.valueForProgress(_seg(t, 0.56, 0.88))
+        lid = _EASE_IN_OUT.valueForProgress(_seg(t, 0.28, 0.46)) * (1 - _EASE_IN_OUT.valueForProgress(_seg(t, 0.84, 0.98)))
+        rise = _EASE_OUT.valueForProgress(_seg(t, 0.44, 0.62))
+        fly = _EASE_IN_OUT.valueForProgress(_seg(t, 0.58, 0.88))
+        angle = _spin(t, 0.30)
 
         # Frame the shot: everything stays inside a rounded stage below the header.
         frame = QPainterPath()
@@ -152,15 +175,22 @@ class IntroOverlay(QWidget):
             p.fillPath(frame, backdrop)
         # Camera: close on the case's front (LED side) at first, pulling back
         # and up until the whole case sits in the middle of the card.
-        framed = QPointF(case_target.center().x(), case_target.center().y() - 2)
+        # The shot is centred on the card; the case slides to its tile as the buds fly out.
+        framed = QPointF(self._stage.center().x(), case_target.center().y() - 2)
         close_up = QPointF(framed.x(), framed.y() - case_target.height() * 0.55)
         stage_center = QPointF(framed.x(), _lerp(close_up.y(), framed.y(), pull_back))
         case_scale = _lerp(_lerp(3.2, 1.22, pull_back), 1.0, fly)
         center = QPointF(_lerp(stage_center.x(), case_target.center().x(), fly), _lerp(stage_center.y(), case_target.center().y(), fly))
         case_rect = _scaled(case_target, case_scale, center)
 
-        p.setOpacity(fade * case_tile.art_opacity())
-        paint_item_art(p, case_rect, family, case_tile.item, theme, lid_open=lid)
+        item = case_tile.item
+        facing = math.cos(angle) > 0  # the LED is on the front
+        led = case_led(item.level, item.charging) if facing else Led.OFF
+        p.save()
+        p.setOpacity(fade * case_tile.art_opacity() * (0.8 + 0.2 * abs(math.cos(angle))))
+        _turned(p, case_rect.center(), angle)
+        paint_case(p, case_rect, family, led, theme, lid)
+        p.restore()
 
         if rise <= 0.0:
             p.end()

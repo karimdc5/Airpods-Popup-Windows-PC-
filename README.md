@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="460" alt="PodPop opening animation: the case opens, the buds glide out and the battery rings fill">
+  <img src="docs/images/demo.gif" width="460" alt="PodPop opening animation: the case spins, opens, the buds glide out and the batteries fill">
 </p>
 
 ## Why PodPop?
@@ -73,8 +73,8 @@ already paired in *Settings → Bluetooth & devices*.
   the audio link.
 - **Low-battery alerts** at 20% and 10%.
 - **Artwork for each model**: AirPods 1–4, Pro, Pro 2 and Max, plus Beats.
-  Light and dark themes, and an opening animation where the lid opens and
-  the buds glide out.
+  An iPhone-style card with light and dark themes, and an opening animation
+  where the case spins, the lid opens and the buds glide out.
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
   battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
   audio, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> hands the AirPods to

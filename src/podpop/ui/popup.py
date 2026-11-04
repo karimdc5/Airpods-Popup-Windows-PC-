@@ -37,15 +37,20 @@ from .intro import INTRO_MS, IntroOverlay
 from .theme import Theme, font
 
 
-TILE_W = 104
+# iPhone layout: both buds side by side on the left, the case on the right,
+# a small battery icon and percentage under each.
+BUD_W = 74
+CASE_W = 150
+HEADPHONES_W = 200
+PAIR_GAP = 22  # between the buds and the case
 ART_H = 112
-RING_D = 50.0
-RING_STROKE = 4.5
-TILE_H = ART_H + 10 + int(RING_D) + 6 + 18
-TILE_SPACING = 6
+PILL_W, PILL_H = 27.0, 12.5
+BATTERY_Y = ART_H + 14
+TILE_H = int(BATTERY_Y + PILL_H) + 6 + 18
 
-CARD_MARGINS = (22, 18, 18, 18)
-CARD_W = 3 * TILE_W + 2 * TILE_SPACING + CARD_MARGINS[0] + CARD_MARGINS[2]
+CARD_MARGINS = (20, 16, 20, 20)
+CARD_W = 2 * BUD_W + PAIR_GAP + CASE_W + CARD_MARGINS[0] + CARD_MARGINS[2]
+_DISPLAY_ORDER = {Part.LEFT: 0, Part.RIGHT: 1, Part.CASE: 2, None: 0}
 CARD_RADIUS = 28.0
 SHADOW_MARGIN = 40
 SCREEN_GAP = 18  # distance between card and the bottom of the work area
@@ -56,8 +61,8 @@ EXIT_DROP = 10
 
 ENTER_MS = 560
 EXIT_MS = 220
-RING_MS = 900
-RING_STAGGER_MS = 90
+FILL_MS = 900
+FILL_STAGGER_MS = 90
 HOVER_GRACE_MS = 2500
 RESIZE_MS = 200
 
@@ -72,18 +77,19 @@ class Action(Enum):
 
 
 class ItemTile(QWidget):
-    """Artwork + battery ring + caption for one part (left, case, right…)."""
+    """Artwork + battery icon + percentage for one part (left, right, case…)."""
 
-    def __init__(self, family: Family, theme: Theme, parent: QWidget | None = None) -> None:
+    def __init__(self, family: Family, part: Part | None, theme: Theme, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(TILE_W, TILE_H)
+        width = HEADPHONES_W if family is Family.HEADPHONES else CASE_W if part is Part.CASE else BUD_W
+        self.setFixedSize(width, TILE_H)
         self.family = family
         self._theme = theme
         self._item: ItemView | None = None
         self._shown = 0.0
         self.art_visible = True  # hidden while the intro animation draws it instead
 
-        self._anim = QVariantAnimation(self, duration=RING_MS, easingCurve=QEasingCurve.Type.OutCubic)
+        self._anim = QVariantAnimation(self, duration=FILL_MS, easingCurve=QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim)
         self._delay = QTimer(self, singleShot=True)
         self._delay.timeout.connect(self._anim.start)
@@ -98,12 +104,12 @@ class ItemTile(QWidget):
 
     def art_rect(self) -> QRectF:
         """Where this tile draws its artwork, in tile coordinates."""
-        w = float(TILE_W)
+        w = float(self.width())
         if self.family is Family.HEADPHONES:
-            return QRectF(6, 12, w - 12, ART_H - 16)
+            return QRectF((w - 120) / 2, 8, 120, ART_H - 12)
         if self.part is Part.CASE:
-            return QRectF(4, 32, w - 8, ART_H - 36)
-        return QRectF(10, 2, w - 20, ART_H - 4)
+            return QRectF((w - 112) / 2, 24, 112, ART_H - 26)
+        return QRectF(4, 6, w - 8, ART_H - 10)
 
     def art_opacity(self) -> float:
         item = self._item
@@ -148,37 +154,18 @@ class ItemTile(QWidget):
             paint_item_art(p, self.art_rect(), self.family, item, theme)
 
         p.setOpacity(0.6 if item.stale else 1.0)
-        center = QPointF(w / 2, ART_H + 10 + RING_D / 2)
-        inset = RING_D / 2 - RING_STROKE / 2
-        ring = QRectF(center.x() - inset, center.y() - inset, inset * 2, inset * 2)
-
-        pen = QPen(theme.ring_track, RING_STROKE)
-        p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(ring)
-        if known and self._shown > 0.5:
-            low = item.level <= LOW_LEVEL and not item.charging
-            pen.setColor(theme.ring_low if low else theme.ring_ok)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            p.setPen(pen)
-            p.drawArc(ring, 90 * 16, -round(self._shown / 100 * 360 * 16))
+        charging = item.charging and known
+        bolt_w = 9.0 if charging else 0.0
+        pill = QRectF((w - PILL_W - bolt_w) / 2, BATTERY_Y, PILL_W, PILL_H)
+        low = known and item.level <= LOW_LEVEL and not item.charging
+        _paint_battery(p, pill, self._shown / 100 if known else 0.0, theme, low)
+        if charging:
+            _paint_bolt(p, QPointF(pill.right() + 7.5, pill.center().y()), theme.title, 0.8)
 
         p.setPen(theme.title if known else theme.subtitle)
-        p.setFont(font(13, QFont.Weight.DemiBold))
-        p.drawText(ring, Qt.AlignmentFlag.AlignCenter, f"{round(self._shown)}%" if known else "—")
-
-        if item.charging and known:
-            _paint_bolt_badge(p, center + QPointF(inset * 0.72, -inset * 0.72), theme)
-
-        p.setOpacity(1.0)
-        p.setPen(theme.subtitle)
-        p.setFont(font(12))
-        caption = f"{item.label} · In ear" if item.in_ear else item.label
-        p.drawText(
-            QRectF(0, ART_H + 10 + RING_D + 6, w, 18),
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            caption,
-        )
+        p.setFont(font(12.5, QFont.Weight.DemiBold))
+        text = f"{round(self._shown)}%" if known else "—"
+        p.drawText(QRectF(0, pill.bottom() + 5, w, 18), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, text)
         p.end()
 
 
@@ -191,20 +178,33 @@ def paint_item_art(p: QPainter, rect: QRectF, family: Family, item: ItemView, th
         paint_bud(p, rect, family, item.part is Part.LEFT, theme)
 
 
-def _paint_bolt_badge(p: QPainter, center: QPointF, theme: Theme) -> None:
+def _paint_battery(p: QPainter, body: QRectF, fraction: float, theme: Theme, low: bool) -> None:
+    """The iOS status-bar battery: rounded body, a nub on the right, a fill bar."""
+    p.save()
+    p.setPen(QPen(theme.ring_track, 1.2))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(body, 3.6, 3.6)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(theme.ring_track)
+    p.drawRoundedRect(QRectF(body.right() + 1.2, body.center().y() - 2.4, 1.8, 4.8), 0.9, 0.9)
+    if fraction > 0.005:
+        inner = body.adjusted(2.0, 2.0, -2.0, -2.0)
+        inner.setWidth(max(inner.width() * min(fraction, 1.0), 2.0))
+        p.setBrush(theme.ring_low if low else theme.ring_ok)
+        p.drawRoundedRect(inner, 1.8, 1.8)
+    p.restore()
+
+
+def _paint_bolt(p: QPainter, center: QPointF, color: QColor, scale: float = 1.0) -> None:
     p.save()
     p.setPen(Qt.PenStyle.NoPen)
-    badge = QColor(theme.card)
-    badge.setAlpha(255)
-    p.setBrush(badge)
-    p.drawEllipse(center, 9.5, 9.5)
     bolt = QPainterPath()
     pts = [(1.2, -6.5), (-4.2, 1.0), (-0.4, 1.0), (-1.4, 6.5), (4.2, -1.2), (0.4, -1.2)]
-    bolt.moveTo(center + QPointF(*pts[0]))
+    bolt.moveTo(center + QPointF(pts[0][0] * scale, pts[0][1] * scale))
     for x, y in pts[1:]:
-        bolt.lineTo(center + QPointF(x, y))
+        bolt.lineTo(center + QPointF(x * scale, y * scale))
     bolt.closeSubpath()
-    p.setBrush(theme.ring_ok)
+    p.setBrush(color)
     p.drawPath(bolt)
     p.restore()
 
@@ -375,27 +375,29 @@ class PopupWindow(QWidget):
         layout.setContentsMargins(*CARD_MARGINS)
         layout.setSpacing(10)
 
+        # Title centred like iOS, settings on the left and close on the right.
         header = QHBoxLayout()
         header.setSpacing(8)
-        text = QVBoxLayout()
-        text.setSpacing(1)
-        self._title = QLabel()
-        self._title.setFont(font(17, QFont.Weight.DemiBold))
-        self._subtitle = QLabel()
-        self._subtitle.setFont(font(12.5))
-        text.addWidget(self._title)
-        text.addWidget(self._subtitle)
-        header.addLayout(text, 1)
         self._gear = _GearButton(theme)
         self._gear.clicked.connect(self.settings_clicked)
         header.addWidget(self._gear, 0, Qt.AlignmentFlag.AlignTop)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        self._title = QLabel(alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._title.setFont(font(19, QFont.Weight.Bold))
+        self._subtitle = QLabel(alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._subtitle.setFont(font(12))
+        text.addSpacing(6)
+        text.addWidget(self._title)
+        text.addWidget(self._subtitle)
+        header.addLayout(text, 1)
         self._close = _CloseButton(theme)
         self._close.clicked.connect(self.dismiss)
         header.addWidget(self._close, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
 
         self._tiles_row = QHBoxLayout()
-        self._tiles_row.setSpacing(TILE_SPACING)
+        self._tiles_row.setSpacing(0)
         layout.addLayout(self._tiles_row)
         self._tiles: list[ItemTile] = []
 
@@ -418,7 +420,7 @@ class PopupWindow(QWidget):
         self._duration_ms = int(duration_s * 1000)
         entering = not self.isVisible() or self._leaving
         intro = entering and self.intro_enabled
-        self._apply_view(view, from_zero=entering, ring_delay_ms=int(INTRO_MS * 0.7) if intro else 150)
+        self._apply_view(view, from_zero=entering, fill_delay_ms=int(INTRO_MS * 0.7) if intro else 150)
         if entering:
             self._enter()
             if intro:
@@ -467,30 +469,33 @@ class PopupWindow(QWidget):
         self._intro.set_theme(t)
         self._card.update()
 
-    def _apply_view(self, view: DeviceView, *, from_zero: bool, ring_delay_ms: int = 150) -> None:
+    def _apply_view(self, view: DeviceView, *, from_zero: bool, fill_delay_ms: int = 150) -> None:
         self._view = view
         title_width = CARD_W - CARD_MARGINS[0] - CARD_MARGINS[2] - self._close.width() - self._gear.width() - 16
         self._title.setText(QFontMetrics(self._title.font()).elidedText(view.title, Qt.TextElideMode.ElideRight, title_width))
         self._title.setToolTip(view.title)
         self._subtitle.setText(view.subtitle)
 
-        layout_key = [(view.family, i.part) for i in view.items]
+        items = sorted(view.items, key=lambda i: _DISPLAY_ORDER[i.part])
+        layout_key = [(view.family, i.part) for i in items]
         if layout_key != [(t.family, t.part) for t in self._tiles] or from_zero:
             self._intro.stop()  # it animates the old tiles
-            self._rebuild_tiles(view)
-        for index, (tile, item) in enumerate(zip(self._tiles, view.items)):
-            delay = ring_delay_ms + index * RING_STAGGER_MS if from_zero else 0
+            self._rebuild_tiles(view.family, items)
+        for index, (tile, item) in enumerate(zip(self._tiles, items)):
+            delay = fill_delay_ms + index * FILL_STAGGER_MS if from_zero else 0
             tile.set_item(item, from_zero=from_zero, delay_ms=delay)
         self._reanchor()
 
-    def _rebuild_tiles(self, view: DeviceView) -> None:
+    def _rebuild_tiles(self, family: Family, items: list[ItemView]) -> None:
         while self._tiles_row.count():
             child = self._tiles_row.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-        self._tiles = [ItemTile(view.family, self._theme) for _ in view.items]
+        self._tiles = [ItemTile(family, item.part, self._theme) for item in items]
         self._tiles_row.addStretch(1)
         for tile in self._tiles:
+            if tile.part is Part.CASE:
+                self._tiles_row.addSpacing(PAIR_GAP)
             self._tiles_row.addWidget(tile)
             # A widget added to a visible window is shown only on a later event
             # loop pass; until then the layout measures the card without it.

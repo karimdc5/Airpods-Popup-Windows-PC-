@@ -24,7 +24,7 @@ from podpop.ui.popup import PopupWindow  # noqa: E402
 from podpop.ui.theme import DARK, LIGHT  # noqa: E402
 
 FRAME_MS = 40  # 25 fps
-RECORD_MS = 3600  # the slide-in, the case opening and the battery rings
+RECORD_MS = 3800  # the slide-in, the case spinning and opening, the batteries filling
 HOLD_MS = 2200  # pause on the finished card before the GIF loops
 PAD = 36
 BACKDROP = ((38, 44, 92), (112, 58, 120))  # top-left -> bottom-right, readable on light and dark pages

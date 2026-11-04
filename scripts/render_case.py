@@ -34,7 +34,7 @@ TINT = QColor(255, 255, 255, 140)  # .55, like the rest of the card's secondary 
 CASE_SYMBOLS: dict[str, str | None] = {
     "airpods": "airpods.chargingcase.svg",
     "airpodsGen3": "airpods.gen3.chargingcase.wireless.svg",
-    "airpodsGen4": "airpods.gen4.chargingcase.wireless.svg",
+    "airpodsGen4": "airpods.chargingcase.wireless.svg",
     "airpodsPro": "airpods.pro.chargingcase.wireless.svg",
     "airpodsPro3": "airpods.pro.chargingcase.wireless.svg",  # same case shape as Pro 2
     "beatsstudio": "beats.studiobuds.chargingcase.svg",
@@ -87,3 +87,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -186,23 +186,24 @@ have some for personal use, drop it in `%APPDATA%\PodPop\hud\`:
 
 The names follow the model: `airpods`, `airpodsGen3`, `airpodsGen4`,
 `airpodsPro`, `airpodsPro3`, `airpodsMax`, `beatssolo` and `beatsstudio`
-(unknown models use `airpodsGen4`). Put your files in one folder and run:
+(unknown models use `airpodsGen4`). Put your files in one folder and run one
+command:
 
 ```powershell
-.\.venv\Scripts\python scripts\import_hud.py C:\path	o\your\hud
+.\.venv\Scripts\python scripts\import_hud.py C:\path\to\your\hud --fetch
 ```
 
 It converts the spins to WebP (Qt can't animate APNG), copies the stills and
-cases, and renders case pictures from any case symbols in
-[`src/podpop/assets/symbols/`](src/podpop/assets/symbols/README.md). Restart
-PodPop to pick them up.
+cases, downloads the case symbols if you don't have them yet (`--fetch`), and
+renders the case pictures from them. Restart PodPop to pick them up.
 
-**Case symbols:** `scripts/render_case.py` can draw the cases from
-[SF Symbols](https://developer.apple.com/sf-symbols/) SVGs exported by
-[brendanballon/sfsymbols-svg](https://github.com/brendanballon/sfsymbols-svg).
+**Case symbols:** the cases are drawn from [SF Symbols](https://developer.apple.com/sf-symbols/)
+SVGs exported by [brendanballon/sfsymbols-svg](https://github.com/brendanballon/sfsymbols-svg).
 Those are Apple's, under Apple's SF Symbols licence, so they aren't included
-here; the folder and the PNGs rendered from it are git-ignored, like the HUD
-clips.
+here: `--fetch` (or `scripts/fetch_symbols.py` on its own) downloads them to
+your machine from a pinned commit, into
+[`src/podpop/assets/symbols/`](src/podpop/assets/symbols/README.md). That
+folder and the PNGs rendered from it are git-ignored, like the HUD clips.
 
 ## Uninstall
 Right-click the tray icon → **Settings** → untick **Start with Windows**, quit

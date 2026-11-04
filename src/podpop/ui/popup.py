@@ -1,9 +1,8 @@
 """The battery HUD: a frosted dark card near the top of the screen.
 
-Top to bottom: the device name, the AirPods swaying gently (the front-facing
-part of the clip, played back and forth, so the buds stay apart and mirrored),
-a row of vertical battery capsules labelled L, C and R, and the connection
-status. It sits just above the taskbar, fades in while rising 8 px, stays a
+Top to bottom: the device name, the AirPods (they turn once as the card
+appears, then stay still), a row of vertical battery capsules under small
+left bud / case / right bud symbols, and the connection status. It sits just above the taskbar, fades in while rising 8 px, stays a
 few seconds, and fades out the same way. There are no buttons; clicking the card connects the AirPods
 when they're not connected, and otherwise just closes it.
 
@@ -31,10 +30,21 @@ from PySide6.QtCore import (
     QRectF,
     Qt,
     QTimer,
-    QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QFontMetrics,
+    QGuiApplication,
+    QImage,
+    QMovie,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QVBoxLayout, QWidget
 
 from ..catalog import Family
@@ -48,9 +58,10 @@ CARD_W = 280
 CARD_RADIUS = 26.0
 PADDING = (16, 20, 16, 18)  # left, top, right, bottom
 TITLE_PX = 17
-CLIP = 168
-CLIP_MARGIN = (4, 2)  # above, below
-LABEL_PX = 10
+CLIP = 130  # the artwork's native size: drawn 1:1, never rescaled
+CLIP_MARGIN = (4, 10)  # above; below, to the battery row
+GLYPH = 13.0
+BOLT_PX = 9.0
 CAPSULE_W, CAPSULE_H, CAPSULE_R = 9.0, 34.0, 5.0
 PERCENT_PX = 11
 COLUMN_GAP = 22
@@ -74,18 +85,10 @@ TITLE = QColor(255, 255, 255, 250)  # .98
 TRACK = QColor(255, 255, 255, 41)  # .16
 PERCENT = QColor(255, 255, 255, 217)  # .85
 STATUS = QColor(255, 255, 255, 140)  # .55
-LABEL = QColor(255, 255, 255, 140)  # .55
+GLYPH_COLOR = QColor(255, 255, 255, 140)  # .55
 OK, WARN, LOW = QColor("#30D158"), QColor("#FFD60A"), QColor("#FF453A")
 
 _COLUMN_ORDER = {Part.LEFT: 0, Part.CASE: 1, Part.RIGHT: 2, None: 0}
-_LABELS = {Part.LEFT: "L", Part.CASE: "C", Part.RIGHT: "R"}
-
-# The clip turns the pair as one piece, so from the side one bud hides the
-# other. Only its front-facing start is used, swung back and forth.
-SWAY_END_US = 900_000  # the first 0.9 s of the clip
-SWAY_PERIOD_S = 4.0  # there and back
-SWAY_DEG = 28.0  # the fallback turntable's swing either side of front-on
-FRAME_PX = 2 * CLIP  # decoded frames are kept at 2x for high-DPI screens
 
 
 class Action(Enum):
@@ -98,10 +101,17 @@ class Action(Enum):
 
 
 def battery_color(level: int | None, charging: bool) -> QColor:
-    """Green above 20%, yellow at 11-20%, red at 10% and below (green while charging)."""
+    """Green while charging whatever the level; otherwise green above 20%, yellow at 11-20%, red at 10% and below."""
     if level is None or charging or level > LOW_LEVEL:
         return OK
     return LOW if level <= CRITICAL_LEVEL else WARN
+
+
+def is_charging(item: ItemView) -> bool:
+    """Per column: a bud only charges in the case, never in an ear, whatever the case is doing."""
+    if item.level is None:
+        return False
+    return item.charging and not (item.part in (Part.LEFT, Part.RIGHT) and item.in_ear)
 
 
 def _font(px: float, weight: QFont.Weight, tracking: float = 0.0) -> QFont:
@@ -142,58 +152,67 @@ def squircle(rect: QRectF, radius: float) -> QPainterPath:
     return path
 
 
-class _Clip:
-    """The front-facing start of the AirPods clip, decoded once by Qt Multimedia.
+class _Spin:
+    """The AirPods artwork: one turn when the card appears, then motionless.
 
-    The frames are kept in memory and played back and forth (see ``frame_at``)
-    instead of looping the whole turn.
+    The spin is an animated WebP/GIF played by QMovie; on its last frame it
+    stops and the still takes over (or the last frame stays, if there's no
+    still). It never loops.
     """
 
-    def __init__(self, on_frame: Callable[[], None]) -> None:
-        self._on_frame = on_frame
-        self.frames: list[QImage] = []
-        self.path = None
-        self.screen_blend = True  # black background: blend in screen mode
-        self._player = None
+    def __init__(self, on_change: Callable[[], None]) -> None:
+        self._on_change = on_change
+        self.movie: QMovie | None = None
+        self.still: QPixmap | None = None
+        self.done = True
+        self._key = None
 
-    def load(self, path) -> None:
-        if path == self.path:
+    def load(self, spin, still) -> None:
+        if (spin, still) == self._key:
             return
-        if self._player is not None:
-            self._player.stop()
-        self.path, self.frames = path, []
-        if path is None:
-            return
-        from PySide6.QtMultimedia import QMediaPlayer, QVideoSink  # only needed with a clip
+        self._key = (spin, still)
+        if self.movie is not None:
+            self.movie.stop()
+        self.movie = None
+        if spin is not None:
+            self.movie = QMovie(str(spin))
+            self.movie.setCacheMode(QMovie.CacheMode.CacheAll)
+            self.movie.frameChanged.connect(self._frame)
+        self.still = QPixmap(str(still)) if still is not None else None
+        if self.still is not None and self.still.isNull():
+            self.still = None
 
-        if self._player is None:
-            self._player = QMediaPlayer()  # no audio output: muted
-            self._sink = QVideoSink()
-            self._player.setVideoSink(self._sink)
-            self._sink.videoFrameChanged.connect(self._frame)
-        self._player.setSource(QUrl.fromLocalFile(str(path)))
-        self._player.play()  # decode the front segment now, off screen
+    @property
+    def available(self) -> bool:
+        return self.movie is not None or self.still is not None
 
-    def frame_at(self, seconds: float) -> QImage | None:
-        """Ease from the first frame to the last of the segment and back."""
-        if not self.frames:
-            return None
-        phase = (1 - math.cos(2 * math.pi * seconds / SWAY_PERIOD_S)) / 2
-        return self.frames[round(phase * (len(self.frames) - 1))]
+    def play(self) -> None:
+        if self.movie is None:
+            self.done = True
+            return
+        self.done = False
+        self.movie.stop()
+        self.movie.start()  # from the first frame
 
-    def _frame(self, video_frame) -> None:
-        image = video_frame.toImage()
-        if image.isNull() or self._player is None:
-            return
-        start = video_frame.startTime()  # microseconds, or -1 if unknown
-        if (start >= 0 and start > SWAY_END_US) or len(self.frames) > 120:
-            self._player.stop()  # we have the front-facing part
-            return
-        if not self.frames:  # decide once per clip whether it carries transparency
-            self.screen_blend = image.pixelColor(0, 0).alpha() == 255
-        smooth = Qt.TransformationMode.SmoothTransformation
-        self.frames.append(image.scaled(FRAME_PX, FRAME_PX, Qt.AspectRatioMode.KeepAspectRatio, smooth))
-        self._on_frame()
+    def hold(self) -> None:
+        """Skip the spin: show the final pose right away."""
+        self.done = True
+        if self.movie is not None:
+            self.movie.stop()
+            self.movie.jumpToFrame(max(0, self.movie.frameCount() - 1))
+
+    def pixmap(self) -> QPixmap | None:
+        if self.done and self.still is not None:
+            return self.still
+        if self.movie is not None:
+            return self.movie.currentPixmap()
+        return None
+
+    def _frame(self, number: int) -> None:
+        if self.movie is not None and number >= self.movie.frameCount() - 1:
+            self.movie.stop()  # one turn, never a loop
+            self.done = True
+        self._on_change()
 
 
 class _Card(QWidget):
@@ -207,9 +226,9 @@ class _Card(QWidget):
         self.backdrop: QPixmap | None = None
         self.animate = True
         self._started = time.monotonic()
-        self._clip = _Clip(self.update)
-        self._tick = QTimer(self, interval=33)  # drives the sway
-        self._tick.timeout.connect(self.update)
+        self._spin = _Spin(self.update)
+        self._tick = QTimer(self, interval=33)  # drives the fallback model's single turn
+        self._tick.timeout.connect(self._fallback_tick)
 
     @staticmethod
     def content_height() -> int:
@@ -218,17 +237,27 @@ class _Card(QWidget):
 
     def set_view(self, view: DeviceView) -> None:
         if self.view is None or self.view.family is not view.family:
-            self._clip.load(hud.clip_for(view.family))
+            self._spin.load(hud.spin_for(view.family), hud.still_for(view.family))
         self.view = view
         self.update()
 
     def start(self) -> None:
         self._started = time.monotonic()
-        if self.animate:
+        if not self.animate:
+            self._spin.hold()
+        elif self._spin.available:
+            self._spin.play()
+        else:
             self._tick.start()
 
     def stop(self) -> None:
         self._tick.stop()
+        self._spin.hold()
+
+    def _fallback_tick(self) -> None:
+        if time.monotonic() - self._started >= turntable.TURN_S:
+            self._tick.stop()  # one turn, then still
+        self.update()
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -245,9 +274,8 @@ class _Card(QWidget):
         w = float(self.width())
         shape = squircle(QRectF(self.rect()), CARD_RADIUS)
 
-        # The card is always opaque inside its shape: the blurred desktop, or the
-        # solid fallback. A clip blended in screen mode needs that, or its black
-        # background would show as a darker square on a see-through card.
+        # Inside its shape the card is always opaque: the blurred desktop, or the
+        # solid fallback when there's no snapshot.
         p.setClipPath(shape)
         if self.backdrop is not None:
             p.drawPixmap(QRectF(self.rect()), self.backdrop, QRectF(self.backdrop.rect()))
@@ -286,52 +314,101 @@ class _Card(QWidget):
         p.end()
 
     def _paint_clip(self, p: QPainter, box: QRectF) -> None:
-        elapsed = time.monotonic() - self._started if self.animate else 0.0
-        frame = self._clip.frame_at(elapsed)
-        if frame is not None:
-            p.save()
-            if self._clip.screen_blend:
-                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
-            p.drawImage(_fit(box, frame.width(), frame.height()), frame)
-            p.restore()
+        if self._spin.available:
+            pixmap = self._spin.pixmap()
+            if pixmap is not None and not pixmap.isNull():
+                p.drawPixmap(_fit(box, pixmap.width(), pixmap.height()), pixmap, QRectF(pixmap.rect()))
             return
-        if self._clip.path is not None:
-            return  # still decoding the first frames; never flash the fallback over a real clip
         sprites = turntable.frames(self.view.family, "buds")
         if sprites:
-            # Swing either side of front-on, like the clip.
-            angle = SWAY_DEG * math.sin(2 * math.pi * elapsed / SWAY_PERIOD_S)
-            sprite = sprites[round(angle / 360 * turntable.FRAMES) % turntable.FRAMES]
+            # One turn as the card appears, then front-on and still.
+            elapsed = time.monotonic() - self._started if self.animate else turntable.TURN_S
+            turn = min(elapsed / turntable.TURN_S, 1.0)
+            sprite = sprites[round(turn * turntable.FRAMES) % turntable.FRAMES]
             p.drawPixmap(_fit(box, sprite.width(), sprite.height()), sprite, QRectF(sprite.rect()))
         elif self.view.family is Family.HEADPHONES:
             paint_headphones(p, box.adjusted(18, 22, -18, -22), DARK)
 
     def _paint_column(self, p: QPainter, cx: float, top: float, item: ItemView, family: Family) -> None:
-        p.setFont(_font(LABEL_PX, QFont.Weight.DemiBold))
-        p.setPen(LABEL)
-        p.drawText(QRectF(cx - 15, top, 30, LABEL_PX + 3), Qt.AlignmentFlag.AlignCenter, _LABELS.get(item.part, ""))
+        _paint_glyph(p, QRectF(cx - GLYPH / 2, top, GLYPH, GLYPH), item.part, family)
 
-        capsule = QRectF(cx - CAPSULE_W / 2, top + LABEL_PX + 3 + 6, CAPSULE_W, CAPSULE_H)
+        capsule = QRectF(cx - CAPSULE_W / 2, top + GLYPH + 6, CAPSULE_W, CAPSULE_H)
         path = QPainterPath()
         path.addRoundedRect(capsule, CAPSULE_R, CAPSULE_R)
         p.fillPath(path, TRACK)
         known = item.level is not None
+        charging = is_charging(item)
         if known and item.level > 0:
             fill_h = CAPSULE_H * min(item.level, 100) / 100
             p.save()
             p.setClipPath(path)
             fill = QRectF(capsule.left(), capsule.bottom() - fill_h, CAPSULE_W, fill_h)  # anchored at the bottom
-            p.fillRect(fill, battery_color(item.level, item.charging))
+            p.fillRect(fill, battery_color(item.level, charging))
             p.restore()
 
-        p.setFont(_font(PERCENT_PX, QFont.Weight.Medium))
-        p.setPen(PERCENT)
+        # The percentage (white), with a 9 px bolt after it only while that part charges.
+        font = _font(PERCENT_PX, QFont.Weight.Medium)
         text = f"{item.level}%" if known else "—"
-        p.drawText(QRectF(cx - 30, capsule.bottom() + 5, 60, PERCENT_PX + 4), Qt.AlignmentFlag.AlignCenter, text)
+        text_w = QFontMetrics(font).horizontalAdvance(text)
+        bolt_w = BOLT_PX * 0.62 + 2 if charging else 0.0
+        left = cx - (text_w + bolt_w) / 2
+        line = QRectF(left, capsule.bottom() + 5, text_w, PERCENT_PX + 4)
+        p.setFont(font)
+        p.setPen(PERCENT)
+        p.drawText(line, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+        if charging:
+            _paint_bolt(p, QRectF(line.right() + 2, line.center().y() - BOLT_PX / 2, BOLT_PX * 0.62, BOLT_PX))
 
 
 def _battery_row_h() -> float:
-    return LABEL_PX + 3 + 6 + CAPSULE_H + 5 + PERCENT_PX + 3
+    return GLYPH + 6 + CAPSULE_H + 5 + PERCENT_PX + 3
+
+
+def _paint_glyph(p: QPainter, r: QRectF, part: Part | None, family: Family) -> None:
+    """13 px silhouettes in the spirit of SF Symbols' airpods / airpods.chargingcase.
+
+    Bud: a slim stem under a small bulb, the ear nozzle pointing up and out
+    (up-right for the left bud, mirrored for the right). Case: a rounded
+    square base with its lid lifted above it, seen from the front.
+    """
+    p.save()
+    p.translate(r.topLeft())
+    p.scale(r.width() / 13.0, r.height() / 13.0)  # drawn on a 13 x 13 grid
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(GLYPH_COLOR)
+    if family is Family.HEADPHONES or part is None:
+        band = QPainterPath(QPointF(2.6, 7.5))
+        band.cubicTo(2.6, 0.6, 10.4, 0.6, 10.4, 7.5)
+        p.strokePath(band, QPen(GLYPH_COLOR, 1.5))
+        p.drawRoundedRect(QRectF(1.0, 6.4, 3.4, 5.8), 1.4, 1.4)
+        p.drawRoundedRect(QRectF(8.6, 6.4, 3.4, 5.8), 1.4, 1.4)
+    elif part is Part.CASE:
+        p.drawRoundedRect(QRectF(1.0, 5.6, 11.0, 6.9), 2.6, 2.6)  # base
+        lid = QPainterPath()
+        lid.addRoundedRect(QRectF(1.4, 0.9, 10.2, 3.1), 1.5, 1.5)  # lid, lifted open
+        p.drawPath(lid)
+        p.fillRect(QRectF(5.4, 4.0, 2.2, 1.6), GLYPH_COLOR)  # the hinge joining them
+    else:
+        if part is Part.RIGHT:
+            p.translate(13.0, 0)
+            p.scale(-1, 1)
+        bud = QPainterPath()
+        bud.addEllipse(QPointF(5.2, 3.6), 2.9, 2.7)  # bulb
+        bud.addEllipse(QPointF(7.9, 2.2), 1.45, 1.3)  # nozzle, up and out
+        bud.addRoundedRect(QRectF(3.5, 4.2, 1.9, 8.4), 0.95, 0.95)  # stem
+        bud.setFillRule(Qt.FillRule.WindingFill)
+        p.drawPath(bud)
+    p.restore()
+
+
+def _paint_bolt(p: QPainter, r: QRectF) -> None:
+    """A small white lightning bolt filling ``r``."""
+    pts = [(0.62, 0.0), (0.0, 0.58), (0.42, 0.58), (0.3, 1.0), (1.0, 0.38), (0.56, 0.38), (0.72, 0.0)]
+    bolt = QPainterPath(QPointF(r.left() + pts[0][0] * r.width(), r.top() + pts[0][1] * r.height()))
+    for x, y in pts[1:]:
+        bolt.lineTo(r.left() + x * r.width(), r.top() + y * r.height())
+    bolt.closeSubpath()
+    p.fillPath(bolt, PERCENT)
 
 
 def _fit(box: QRectF, w: int, h: int) -> QRectF:

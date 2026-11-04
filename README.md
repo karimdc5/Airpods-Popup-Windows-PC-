@@ -77,7 +77,7 @@ already paired in *Settings → Bluetooth & devices*.
   the case, and the connection status. It fades in, stays 4 seconds, and fades
   out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. The 3D models
   are PodPop's own, rendered by [`scripts/render_turntable.py`](scripts/render_turntable.py),
-  and you can [use your own clip](#use-your-own-hud-clip) instead.
+  and you can [use your own artwork](#use-your-own-hud-artwork) instead.
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
   battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
   audio, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> hands the AirPods to
@@ -171,14 +171,19 @@ ender_turntable.py          # re-render the 3D frames (needs numpy)
 Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
 `%LOCALAPPDATA%\PodPop\logs`.
 
-## Use your own HUD clip
+## Use your own HUD artwork
 
-PodPop's popup can play a short video loop of the AirPods instead of its own
-3D turntable. PodPop doesn't ship any Apple artwork, but if you have a clip
-for personal use, drop it in `%APPDATA%\PodPop\hud\` named after the model:
-`airpodsPro`, `airpods`, `airpods3` or `airpodsMax`, as `.mov` or `.mp4`.
-A clip on a black background blends straight into the dark card. Restart
-PodPop to pick it up.
+When the popup appears, the AirPods turn once and then stay still. By default
+that's PodPop's own 3D model. PodPop doesn't ship Apple artwork, but if you
+have some for personal use, drop it in `%APPDATA%\PodPop\hud\`:
+
+| File | What it is |
+|---|---|
+| `airpodsPro_spin.webp` | One full turn with transparency, played once (animated WebP or GIF; Qt can't animate APNG, so convert one first) |
+| `airpodsPro_still.png` | The pose shown afterwards (optional; without it the spin's last frame stays) |
+
+Use `airpods`, `airpods3` or `airpodsMax` in place of `airpodsPro` for other
+models. Restart PodPop to pick them up.
 
 ## Uninstall
 Right-click the tray icon → **Settings** → untick **Start with Windows**, quit

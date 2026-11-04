@@ -8,3 +8,7 @@ dist/
 
 # Personal HUD clips (see src/podpop/ui/hud.py); never commit them
 src/podpop/assets/hud/
+
+# SF Symbols SVGs (Apple licence: not redistributable); only the README is tracked
+src/podpop/assets/symbols/*
+!src/podpop/assets/symbols/README.md

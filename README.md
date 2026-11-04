@@ -182,8 +182,27 @@ have some for personal use, drop it in `%APPDATA%\PodPop\hud\`:
 | `airpodsPro_spin.webp` | One full turn with transparency, played once (animated WebP or GIF; Qt can't animate APNG, so convert one first) |
 | `airpodsPro_still.png` | The pose shown afterwards (optional; without it the spin's last frame stays) |
 
-Use `airpods`, `airpods3` or `airpodsMax` in place of `airpodsPro` for other
-models. Restart PodPop to pick them up.
+| `airpodsPro_case.png` | The case beside the buds (optional; without it PodPop shows its own render) |
+
+The names follow the model: `airpods`, `airpodsGen3`, `airpodsGen4`,
+`airpodsPro`, `airpodsPro3`, `airpodsMax`, `beatssolo` and `beatsstudio`
+(unknown models use `airpodsGen4`). Put your files in one folder and run:
+
+```powershell
+.\.venv\Scripts\python scripts\import_hud.py C:\path	o\your\hud
+```
+
+It converts the spins to WebP (Qt can't animate APNG), copies the stills and
+cases, and renders case pictures from any case symbols in
+[`src/podpop/assets/symbols/`](src/podpop/assets/symbols/README.md). Restart
+PodPop to pick them up.
+
+**Case symbols:** `scripts/render_case.py` can draw the cases from
+[SF Symbols](https://developer.apple.com/sf-symbols/) SVGs exported by
+[brendanballon/sfsymbols-svg](https://github.com/brendanballon/sfsymbols-svg).
+Those are Apple's, under Apple's SF Symbols licence, so they aren't included
+here; the folder and the PNGs rendered from it are git-ignored, like the HUD
+clips.
 
 ## Uninstall
 Right-click the tray icon → **Settings** → untick **Start with Windows**, quit

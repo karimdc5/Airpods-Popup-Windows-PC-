@@ -1,4 +1,4 @@
-"""The battery HUD: a frosted dark card near the top of the screen.
+﻿"""The battery HUD: a frosted dark card near the top of the screen.
 
 Top to bottom: the device name; the AirPods on the left (they turn once as
 the card appears, then stay still) and the case on the right, like the iPhone
@@ -107,8 +107,8 @@ class Action(Enum):
 
     HIDDEN = "Connected"  # connected (or nothing to connect)
     CONNECT = "Not connected"
-    CONNECTING = "Connecting…"
-    FAILED = "Couldn’t connect"
+    CONNECTING = "Connectingâ€¦"
+    FAILED = "Couldnâ€™t connect"
 
 
 def battery_color(level: int | None, charging: bool) -> QColor:
@@ -420,16 +420,14 @@ class _Card(QWidget):
 
     def _paint_case(self, p: QPainter, box: QRectF) -> None:
         """The case beside the buds: your ``<name>_case.png`` if there is one, else PodPop's own, front-on."""
-        image = self._case_art
-        if image is None:
-            sprites = turntable.frames(self.view.family, "case")
-            image = sprites[0] if sprites else None
+        sprites = turntable.frames(self.view.family, "case")
+        image = sprites[0] if sprites else self._case_art
         if image is None or image.isNull():
             return
         # Bottom-aligned with the buds, a little narrower than its column so it sits like iOS.
-        scale = min((box.width() - 6) / image.width(), (box.height() * 0.62) / image.height())
+        scale = min((box.width() - 6) / image.width(), (box.height() * 0.5) / image.height())
         w, h = image.width() * scale, image.height() * scale
-        target = QRectF(box.center().x() - w / 2, box.bottom() - h - box.height() * 0.08, w, h)
+        target = QRectF(box.center().x() - w / 2, box.bottom() - h - box.height() * 0.04, w, h)
         p.drawPixmap(target, image, QRectF(image.rect()))
 
     def _paint_group(self, p: QPainter, cx: float, top: float, group: BatteryGroup) -> None:
@@ -440,7 +438,7 @@ class _Card(QWidget):
 
         p.setFont(_font(PERCENT_PX, QFont.Weight.Medium))
         p.setPen(PERCENT)
-        text = f"{group.level} %" if group.level is not None else "—"
+        text = f"{group.level} %" if group.level is not None else "â€”"
         p.drawText(QRectF(cx - GROUP_W / 2, battery.bottom() + 5, GROUP_W, PERCENT_PX + 4), Qt.AlignmentFlag.AlignCenter, text)
 
 
@@ -682,3 +680,4 @@ def _bring_to_front(window: QWidget) -> None:
     ctypes.windll.user32.SetWindowPos(
         int(window.winId()), _HWND_TOPMOST, 0, 0, 0, 0, _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE
     )
+

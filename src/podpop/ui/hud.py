@@ -8,10 +8,13 @@ from source; that folder is git-ignored), named after the model:
     airpodsPro_still.png    shown for the rest of the card's life (optional:
                             without it the spin's last frame stays up)
 
-Other models: ``airpods``, ``airpods3`` and ``airpodsMax`` in place of
-``airpodsPro``. The spin must be an animated WebP or GIF with transparency:
-Qt plays those, but shows only the first frame of an animated PNG, so convert
-an APNG first. Without a spin, the popup turns PodPop's own 3D model once.
+The name comes from the model (catalog.DeviceModel.hud): ``airpods``,
+``airpodsGen3``, ``airpodsGen4``, ``airpodsPro``, ``airpodsPro3``,
+``airpodsMax``, ``beatssolo``, ``beatsstudio``; unknown models use
+``airpodsGen4``. The spin must be an animated WebP or GIF with transparency:
+Qt plays those, but shows only the first frame of an animated PNG, so
+``scripts/import_hud.py`` converts a folder of ``*_spin.png`` APNGs for you.
+Without a spin, the popup turns PodPop's own 3D model once.
 """
 
 from __future__ import annotations
@@ -19,27 +22,28 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..catalog import Family
 from ..settings import config_dir
 
-_NAMES = {Family.PRO: "airpodsPro", Family.CLASSIC: "airpods", Family.OPEN: "airpods3", Family.HEADPHONES: "airpodsMax"}
 _PACKAGED = Path(__file__).resolve().parent.parent / "assets" / "hud"
 
 
-def spin_for(family: Family) -> Path | None:
-    return _find(family, "_spin", (".webp", ".gif"))
+def hud_dir() -> Path:
+    return config_dir() / "hud"
 
 
-def still_for(family: Family) -> Path | None:
-    return _find(family, "_still", (".png", ".webp"))
+def spin_for(name: str) -> Path | None:
+    return _find(name, "_spin", (".webp", ".gif"))
 
 
-def _find(family: Family, suffix: str, extensions: tuple[str, ...]) -> Path | None:
-    name = _NAMES.get(family)
+def still_for(name: str) -> Path | None:
+    return _find(name, "_still", (".png", ".webp"))
+
+
+def _find(name: str, suffix: str, extensions: tuple[str, ...]) -> Path | None:
     # PODPOP_NO_CLIP=1: show what a fresh install shows (README screenshots use this).
-    if name is None or os.environ.get("PODPOP_NO_CLIP"):
+    if os.environ.get("PODPOP_NO_CLIP"):
         return None
-    for folder in (config_dir() / "hud", _PACKAGED):
+    for folder in (hud_dir(), _PACKAGED):
         for ext in extensions:
             path = folder / f"{name}{suffix}{ext}"
             if path.is_file():

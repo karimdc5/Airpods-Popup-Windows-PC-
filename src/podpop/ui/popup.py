@@ -1,8 +1,9 @@
 """The battery HUD: a frosted dark card near the top of the screen.
 
 Top to bottom: the device name, the AirPods (they turn once as the card
-appears, then stay still), a row of vertical battery capsules under small
-left bud / case / right bud symbols, and the connection status. It sits just above the taskbar, fades in while rising 8 px, stays a
+appears, then stay still), the batteries the way iOS groups them (the AirPods
+together, the case separately, each a horizontal battery with the bolt inside
+while charging), and the connection status. It sits just above the taskbar, fades in while rising 8 px, stays a
 few seconds, and fades out the same way. There are no buttons; clicking the card connects the AirPods
 when they're not connected, and otherwise just closes it.
 
@@ -13,11 +14,13 @@ hairline, and a soft 40 px shadow.
 
 from __future__ import annotations
 
+import bisect
 import ctypes
 import math
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 
 from PySide6.QtCore import (
@@ -39,7 +42,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QGuiApplication,
     QImage,
-    QMovie,
+    QImageReader,
     QPainter,
     QPainterPath,
     QPen,
@@ -62,9 +65,11 @@ CLIP = 130  # the artwork's native size: drawn 1:1, never rescaled
 CLIP_MARGIN = (4, 10)  # above; below, to the battery row
 GLYPH = 13.0
 BOLT_PX = 9.0
-CAPSULE_W, CAPSULE_H, CAPSULE_R = 9.0, 34.0, 5.0
-PERCENT_PX = 11
-COLUMN_GAP = 22
+BATTERY_W, BATTERY_H, BATTERY_R = 25.0, 12.0, 3.5
+PERCENT_PX = 13
+GROUP_W = 64
+GROUP_GAP = 36
+SPLIT_AT = 10  # buds further apart than this (in %) get a battery each, like iOS
 STATUS_PX = 12
 STATUS_GAP = 12
 
@@ -72,6 +77,9 @@ SCREEN_GAP = 18  # between the card and the bottom of the work area
 SHADOW_MARGIN = 40
 ENTER_RISE = 8
 FADE_MS = 180
+# The card never leaves mid-spin: it waits for the turn to finish, then shows
+# the still at least this long (and never less than the usual duration).
+STILL_HOLD_MS = 1500
 BLUR_DOWNSCALE = 24  # shrink, then smooth back up: a wide (~28 px) blur
 SATURATION = 1.8
 
@@ -83,12 +91,13 @@ HAIRLINE = QColor(255, 255, 255, 20)  # .08
 SHADOW = QColor(0, 0, 0, 115)  # .45
 TITLE = QColor(255, 255, 255, 250)  # .98
 TRACK = QColor(255, 255, 255, 41)  # .16
-PERCENT = QColor(255, 255, 255, 217)  # .85
+OUTLINE = QColor(255, 255, 255, 110)
+PERCENT = QColor(255, 255, 255, 230)  # .9
+BOLT = QColor(255, 255, 255, 230)  # .9, white and monochrome
 STATUS = QColor(255, 255, 255, 140)  # .55
 GLYPH_COLOR = QColor(255, 255, 255, 140)  # .55
 OK, WARN, LOW = QColor("#30D158"), QColor("#FFD60A"), QColor("#FF453A")
 
-_COLUMN_ORDER = {Part.LEFT: 0, Part.CASE: 1, Part.RIGHT: 2, None: 0}
 
 
 class Action(Enum):
@@ -105,6 +114,41 @@ def battery_color(level: int | None, charging: bool) -> QColor:
     if level is None or charging or level > LOW_LEVEL:
         return OK
     return LOW if level <= CRITICAL_LEVEL else WARN
+
+
+@dataclass(frozen=True, slots=True)
+class BatteryGroup:
+    """One battery shown on the card: "pair", "left", "right", "case" or "headphones"."""
+
+    kind: str
+    level: int | None
+    charging: bool
+
+
+def battery_groups(view: DeviceView) -> list[BatteryGroup]:
+    """Like iOS: one battery for the AirPods and one for the case.
+
+    The buds share a battery (the lower of the two) while their levels are
+    within ``SPLIT_AT``; further apart, each gets its own. The pair counts as
+    charging only if every bud with a reading is charging, and the case's
+    charging never makes the buds look charged.
+    """
+    parts = {i.part: i for i in view.items}
+    if view.family is Family.HEADPHONES or None in parts:
+        item = next(iter(view.items))
+        return [BatteryGroup("headphones", item.level, is_charging(item))]
+    buds = [parts[p] for p in (Part.LEFT, Part.RIGHT) if p in parts]
+    known = [b for b in buds if b.level is not None]
+    groups: list[BatteryGroup] = []
+    if len(known) == 2 and abs(known[0].level - known[1].level) > SPLIT_AT:
+        groups += [BatteryGroup(b.part.value, b.level, is_charging(b)) for b in known]
+    else:
+        level = min((b.level for b in known), default=None)
+        groups.append(BatteryGroup("pair", level, bool(known) and all(is_charging(b) for b in known)))
+    case = parts.get(Part.CASE)
+    if case is not None:
+        groups.append(BatteryGroup("case", case.level, is_charging(case)))
+    return groups
 
 
 def is_charging(item: ItemView) -> bool:
@@ -155,68 +199,91 @@ def squircle(rect: QRectF, radius: float) -> QPainterPath:
 class _Spin:
     """The AirPods artwork: one turn when the card appears, then motionless.
 
-    The spin is an animated WebP/GIF played by QMovie; on its last frame it
-    stops and the still takes over (or the last frame stays, if there's no
-    still). It never loops.
+    The spin (animated WebP/GIF) is decoded once by Qt's image reader, the
+    same decoder QMovie uses, and played on a precise timer: QMovie schedules
+    frames with Windows' 15.6 ms coarse timer, which stretched a 33 ms frame
+    to ~47 ms and a 6 s turn to almost 9 s. On the last frame it stops and the
+    still takes over (or the last frame stays, if there's no still). It never
+    loops.
     """
 
-    def __init__(self, on_change: Callable[[], None]) -> None:
+    def __init__(self, on_change: Callable[[], None], on_done: Callable[[], None]) -> None:
         self._on_change = on_change
-        self.movie: QMovie | None = None
+        self._on_done = on_done
+        self.frames: list[QPixmap] = []
+        self._ends: list[float] = []  # when each frame ends, in seconds from the start
         self.still: QPixmap | None = None
         self.done = True
+        self._index = 0
+        self._started = 0.0
         self._key = None
+        self._timer = QTimer(interval=8, timerType=Qt.TimerType.PreciseTimer)
+        self._timer.timeout.connect(self._advance)
 
     def load(self, spin, still) -> None:
         if (spin, still) == self._key:
             return
         self._key = (spin, still)
-        if self.movie is not None:
-            self.movie.stop()
-        self.movie = None
+        self._timer.stop()
+        self.frames, self._ends, self.done = [], [], True
         if spin is not None:
-            self.movie = QMovie(str(spin))
-            self.movie.setCacheMode(QMovie.CacheMode.CacheAll)
-            self.movie.frameChanged.connect(self._frame)
+            reader = QImageReader(str(spin))
+            elapsed = 0.0
+            while True:
+                image = reader.read()
+                if image.isNull():
+                    break
+                self.frames.append(QPixmap.fromImage(image))
+                elapsed += max(reader.nextImageDelay(), 1) / 1000.0
+                self._ends.append(elapsed)
         self.still = QPixmap(str(still)) if still is not None else None
         if self.still is not None and self.still.isNull():
             self.still = None
 
     @property
     def available(self) -> bool:
-        return self.movie is not None or self.still is not None
+        return bool(self.frames) or self.still is not None
 
     def play(self) -> None:
-        if self.movie is None:
+        self._index = 0
+        if not self.frames:
             self.done = True
             return
         self.done = False
-        self.movie.stop()
-        self.movie.start()  # from the first frame
+        self._started = time.monotonic()
+        self._timer.start()
 
     def hold(self) -> None:
         """Skip the spin: show the final pose right away."""
+        self._timer.stop()
         self.done = True
-        if self.movie is not None:
-            self.movie.stop()
-            self.movie.jumpToFrame(max(0, self.movie.frameCount() - 1))
+        self._index = max(0, len(self.frames) - 1)
 
     def pixmap(self) -> QPixmap | None:
         if self.done and self.still is not None:
             return self.still
-        if self.movie is not None:
-            return self.movie.currentPixmap()
+        if self.frames:
+            return self.frames[self._index]
         return None
 
-    def _frame(self, number: int) -> None:
-        if self.movie is not None and number >= self.movie.frameCount() - 1:
-            self.movie.stop()  # one turn, never a loop
+    def _advance(self) -> None:
+        elapsed = time.monotonic() - self._started
+        index = bisect.bisect_right(self._ends, elapsed)
+        if index >= len(self.frames):
+            self._timer.stop()  # one turn, never a loop
             self.done = True
-        self._on_change()
+            self._index = len(self.frames) - 1
+            self._on_change()
+            self._on_done()
+            return
+        if index != self._index:
+            self._index = index
+            self._on_change()
 
 
 class _Card(QWidget):
     clicked = Signal()
+    spin_finished = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -226,7 +293,7 @@ class _Card(QWidget):
         self.backdrop: QPixmap | None = None
         self.animate = True
         self._started = time.monotonic()
-        self._spin = _Spin(self.update)
+        self._spin = _Spin(self.update, self.spin_finished.emit)
         self._tick = QTimer(self, interval=33)  # drives the fallback model's single turn
         self._tick.timeout.connect(self._fallback_tick)
 
@@ -236,8 +303,8 @@ class _Card(QWidget):
                      + STATUS_GAP + STATUS_PX + 3 + PADDING[3])
 
     def set_view(self, view: DeviceView) -> None:
-        if self.view is None or self.view.family is not view.family:
-            self._spin.load(hud.spin_for(view.family), hud.still_for(view.family))
+        if self.view is None or self.view.hud != view.hud:
+            self._spin.load(hud.spin_for(view.hud), hud.still_for(view.hud))
         self.view = view
         self.update()
 
@@ -254,9 +321,14 @@ class _Card(QWidget):
         self._tick.stop()
         self._spin.hold()
 
+    @property
+    def spinning(self) -> bool:
+        return not self._spin.done or self._tick.isActive()
+
     def _fallback_tick(self) -> None:
         if time.monotonic() - self._started >= turntable.TURN_S:
             self._tick.stop()  # one turn, then still
+            self.spin_finished.emit()
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:
@@ -299,13 +371,12 @@ class _Card(QWidget):
         self._paint_clip(p, QRectF((w - CLIP) / 2, y, CLIP, CLIP))
         y += CLIP + CLIP_MARGIN[1]
 
-        items = sorted(self.view.items, key=lambda i: _COLUMN_ORDER[i.part])
-        column_w = 30.0  # wide enough for "100%"
-        row_w = len(items) * column_w + (len(items) - 1) * COLUMN_GAP
+        groups = battery_groups(self.view)
+        row_w = len(groups) * GROUP_W + (len(groups) - 1) * GROUP_GAP
         x = (w - row_w) / 2
-        for item in items:
-            self._paint_column(p, x + column_w / 2, y, item, self.view.family)
-            x += column_w + COLUMN_GAP
+        for group in groups:
+            self._paint_group(p, x + GROUP_W / 2, y, group)
+            x += GROUP_W + GROUP_GAP
         y += _battery_row_h() + STATUS_GAP
 
         p.setFont(_font(STATUS_PX, QFont.Weight.Normal))
@@ -329,67 +400,79 @@ class _Card(QWidget):
         elif self.view.family is Family.HEADPHONES:
             paint_headphones(p, box.adjusted(18, 22, -18, -22), DARK)
 
-    def _paint_column(self, p: QPainter, cx: float, top: float, item: ItemView, family: Family) -> None:
-        _paint_glyph(p, QRectF(cx - GLYPH / 2, top, GLYPH, GLYPH), item.part, family)
+    def _paint_group(self, p: QPainter, cx: float, top: float, group: BatteryGroup) -> None:
+        glyph_w = GLYPH * (1.55 if group.kind == "pair" else 1.0)
+        _paint_glyph(p, QRectF(cx - glyph_w / 2, top, glyph_w, GLYPH), group.kind)
 
-        capsule = QRectF(cx - CAPSULE_W / 2, top + GLYPH + 6, CAPSULE_W, CAPSULE_H)
-        path = QPainterPath()
-        path.addRoundedRect(capsule, CAPSULE_R, CAPSULE_R)
-        p.fillPath(path, TRACK)
-        known = item.level is not None
-        charging = is_charging(item)
-        if known and item.level > 0:
-            fill_h = CAPSULE_H * min(item.level, 100) / 100
-            p.save()
-            p.setClipPath(path)
-            fill = QRectF(capsule.left(), capsule.bottom() - fill_h, CAPSULE_W, fill_h)  # anchored at the bottom
-            p.fillRect(fill, battery_color(item.level, charging))
-            p.restore()
+        battery = QRectF(cx - BATTERY_W / 2, top + GLYPH + 6, BATTERY_W, BATTERY_H)
+        _paint_battery(p, battery, group.level, group.charging)
 
-        # The percentage (white), with a 9 px bolt after it only while that part charges.
-        font = _font(PERCENT_PX, QFont.Weight.Medium)
-        text = f"{item.level}%" if known else "—"
-        text_w = QFontMetrics(font).horizontalAdvance(text)
-        bolt_w = BOLT_PX * 0.62 + 2 if charging else 0.0
-        left = cx - (text_w + bolt_w) / 2
-        line = QRectF(left, capsule.bottom() + 5, text_w, PERCENT_PX + 4)
-        p.setFont(font)
+        p.setFont(_font(PERCENT_PX, QFont.Weight.Medium))
         p.setPen(PERCENT)
-        p.drawText(line, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-        if charging:
-            _paint_bolt(p, QRectF(line.right() + 2, line.center().y() - BOLT_PX / 2, BOLT_PX * 0.62, BOLT_PX))
+        text = f"{group.level} %" if group.level is not None else "—"
+        p.drawText(QRectF(cx - GROUP_W / 2, battery.bottom() + 5, GROUP_W, PERCENT_PX + 4), Qt.AlignmentFlag.AlignCenter, text)
+
+
+def _paint_battery(p: QPainter, body: QRectF, level: int | None, charging: bool) -> None:
+    """The iOS battery: outlined body with a nub, filled from the left, a white bolt inside while charging."""
+    p.save()
+    outline = QPainterPath()
+    outline.addRoundedRect(body, BATTERY_R, BATTERY_R)
+    p.fillPath(outline, TRACK)
+    p.strokePath(outline, QPen(OUTLINE, 1.0))
+    nub = QRectF(body.right() + 1.0, body.center().y() - 2.2, 1.8, 4.4)
+    p.fillPath(_rounded(nub, 0.9), OUTLINE)
+    if level is not None and level > 0:
+        inner = body.adjusted(2.0, 2.0, -2.0, -2.0)
+        inner.setWidth(max(inner.width() * min(level, 100) / 100, 2.0))
+        p.fillPath(_rounded(inner, BATTERY_R - 1.8), battery_color(level, charging))
+    if charging and level is not None:
+        h = BOLT_PX
+        _paint_bolt(p, QRectF(body.center().x() - h * 0.31, body.center().y() - h / 2, h * 0.62, h))
+    p.restore()
+
+
+def _rounded(rect: QRectF, radius: float) -> QPainterPath:
+    path = QPainterPath()
+    path.addRoundedRect(rect, radius, radius)
+    return path
 
 
 def _battery_row_h() -> float:
-    return GLYPH + 6 + CAPSULE_H + 5 + PERCENT_PX + 3
+    return GLYPH + 6 + BATTERY_H + 5 + PERCENT_PX + 4
 
 
-def _paint_glyph(p: QPainter, r: QRectF, part: Part | None, family: Family) -> None:
+def _paint_glyph(p: QPainter, r: QRectF, kind: str) -> None:
     """13 px silhouettes in the spirit of SF Symbols' airpods / airpods.chargingcase.
 
     Bud: a slim stem under a small bulb, the ear nozzle pointing up and out
     (up-right for the left bud, mirrored for the right). Case: a rounded
     square base with its lid lifted above it, seen from the front.
     """
+    if kind == "pair":  # two buds side by side, nozzles facing each other
+        half = r.width() / 2
+        _paint_glyph(p, QRectF(r.left(), r.top(), half, r.height()), "left")
+        _paint_glyph(p, QRectF(r.left() + half, r.top(), half, r.height()), "right")
+        return
     p.save()
     p.translate(r.topLeft())
     p.scale(r.width() / 13.0, r.height() / 13.0)  # drawn on a 13 x 13 grid
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(GLYPH_COLOR)
-    if family is Family.HEADPHONES or part is None:
+    if kind == "headphones":
         band = QPainterPath(QPointF(2.6, 7.5))
         band.cubicTo(2.6, 0.6, 10.4, 0.6, 10.4, 7.5)
         p.strokePath(band, QPen(GLYPH_COLOR, 1.5))
         p.drawRoundedRect(QRectF(1.0, 6.4, 3.4, 5.8), 1.4, 1.4)
         p.drawRoundedRect(QRectF(8.6, 6.4, 3.4, 5.8), 1.4, 1.4)
-    elif part is Part.CASE:
+    elif kind == "case":
         p.drawRoundedRect(QRectF(1.0, 5.6, 11.0, 6.9), 2.6, 2.6)  # base
         lid = QPainterPath()
         lid.addRoundedRect(QRectF(1.4, 0.9, 10.2, 3.1), 1.5, 1.5)  # lid, lifted open
         p.drawPath(lid)
         p.fillRect(QRectF(5.4, 4.0, 2.2, 1.6), GLYPH_COLOR)  # the hinge joining them
     else:
-        if part is Part.RIGHT:
+        if kind == "right":
             p.translate(13.0, 0)
             p.scale(-1, 1)
         bud = QPainterPath()
@@ -408,7 +491,8 @@ def _paint_bolt(p: QPainter, r: QRectF) -> None:
     for x, y in pts[1:]:
         bolt.lineTo(r.left() + x * r.width(), r.top() + y * r.height())
     bolt.closeSubpath()
-    p.fillPath(bolt, PERCENT)
+    p.strokePath(bolt, QPen(QColor(0, 0, 0, 90), 1.0))
+    p.fillPath(bolt, BOLT)
 
 
 def _fit(box: QRectF, w: int, h: int) -> QRectF:
@@ -445,11 +529,13 @@ class PopupWindow(QWidget):
         outer.setContentsMargins(SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN)
         self._card = _Card()
         self._card.clicked.connect(self._on_click)
+        self._card.spin_finished.connect(self._on_spin_finished)
         outer.addWidget(self._card)
         self._card.setGraphicsEffect(QGraphicsDropShadowEffect(blurRadius=40, offset=QPointF(0, 12), color=SHADOW))
 
         self._hide_timer = QTimer(self, singleShot=True)
-        self._hide_timer.timeout.connect(self.dismiss)
+        self._hide_timer.timeout.connect(self._on_hide_timer)
+        self._dismiss_after_spin = False
 
     # ----------------------------------------------------------------- API
 
@@ -464,6 +550,7 @@ class PopupWindow(QWidget):
     def present(self, view: DeviceView, duration_s: float) -> None:
         """Show (or refresh) the card; ``duration_s <= 0`` keeps it until clicked."""
         self._card.set_view(view)
+        self._dismiss_after_spin = False
         if not self.isVisible() or self._leaving:
             self._enter()
         ms = int(duration_s * 1000)
@@ -492,6 +579,19 @@ class PopupWindow(QWidget):
         self._card.update()
 
     # ------------------------------------------------------------ internals
+
+    def _on_hide_timer(self) -> None:
+        if self._card.spinning:
+            self._dismiss_after_spin = True  # leave once the turn is done
+        else:
+            self.dismiss()
+
+    def _on_spin_finished(self) -> None:
+        if self._leaving or not self.isVisible():
+            return
+        if self._dismiss_after_spin or (self._hide_timer.isActive() and self._hide_timer.remainingTime() < STILL_HOLD_MS):
+            self._dismiss_after_spin = False
+            self._hide_timer.start(STILL_HOLD_MS)
 
     def _on_click(self) -> None:
         if self._action in (Action.CONNECT, Action.FAILED):

@@ -29,35 +29,37 @@ class DeviceModel:
     model_id: int | None
     name: str
     family: Family
+    hud: str = "airpodsGen4"  # which HUD artwork to show (see ui/hud.py); unknown models get Gen 4
 
 
-def _m(model_id: int, name: str, family: Family) -> tuple[int, DeviceModel]:
-    return model_id, DeviceModel(model_id, name, family)
+def _m(model_id: int, name: str, family: Family, hud: str = "airpodsGen4") -> tuple[int, DeviceModel]:
+    return model_id, DeviceModel(model_id, name, family, hud)
 
 
 _MODELS: dict[int, DeviceModel] = dict(
     [
-        _m(0x2002, "AirPods", Family.CLASSIC),
-        _m(0x200F, "AirPods (2nd generation)", Family.CLASSIC),
-        _m(0x2013, "AirPods (3rd generation)", Family.OPEN),
-        _m(0x2019, "AirPods 4", Family.OPEN),
-        _m(0x201B, "AirPods 4 (ANC)", Family.OPEN),
-        _m(0x200E, "AirPods Pro", Family.PRO),
-        _m(0x2014, "AirPods Pro 2", Family.PRO),
-        _m(0x2024, "AirPods Pro 2 (USB-C)", Family.PRO),
-        _m(0x200A, "AirPods Max", Family.HEADPHONES),
-        _m(0x201F, "AirPods Max (USB-C)", Family.HEADPHONES),
+        _m(0x2002, "AirPods", Family.CLASSIC, "airpods"),
+        _m(0x200F, "AirPods (2nd generation)", Family.CLASSIC, "airpods"),
+        _m(0x2013, "AirPods (3rd generation)", Family.OPEN, "airpodsGen3"),
+        _m(0x2019, "AirPods 4", Family.OPEN, "airpodsGen4"),
+        _m(0x201B, "AirPods 4 (ANC)", Family.OPEN, "airpodsGen4"),
+        _m(0x200E, "AirPods Pro", Family.PRO, "airpodsPro"),
+        _m(0x2014, "AirPods Pro 2", Family.PRO, "airpodsPro"),
+        _m(0x2024, "AirPods Pro 2 (USB-C)", Family.PRO, "airpodsPro"),
+        _m(0x200A, "AirPods Max", Family.HEADPHONES, "airpodsMax"),
+        _m(0x201F, "AirPods Max (USB-C)", Family.HEADPHONES, "airpodsMax"),
         _m(0x200B, "Powerbeats Pro", Family.PRO),
-        _m(0x2011, "Beats Studio Buds", Family.PRO),
-        _m(0x2016, "Beats Studio Buds +", Family.PRO),
-        _m(0x2012, "Beats Fit Pro", Family.PRO),
+        _m(0x2011, "Beats Studio Buds", Family.PRO, "beatsstudio"),
+        _m(0x2016, "Beats Studio Buds +", Family.PRO, "beatsstudio"),
+        _m(0x2012, "Beats Fit Pro", Family.PRO, "beatsstudio"),
         _m(0x2003, "Powerbeats³", Family.HEADPHONES),
         _m(0x200D, "Powerbeats⁴", Family.HEADPHONES),
         _m(0x2005, "BeatsX", Family.HEADPHONES),
         _m(0x2010, "Beats Flex", Family.HEADPHONES),
-        _m(0x2006, "Beats Solo³", Family.HEADPHONES),
-        _m(0x200C, "Beats Solo Pro", Family.HEADPHONES),
-        _m(0x2009, "Beats Studio³", Family.HEADPHONES),
+        _m(0x2006, "Beats Solo³", Family.HEADPHONES, "beatssolo"),
+        _m(0x200C, "Beats Solo Pro", Family.HEADPHONES, "beatssolo"),
+        _m(0x2009, "Beats Studio³", Family.HEADPHONES, "beatsstudio"),
+        # AirPods Pro 3 (airpodsPro3) and AirPods 5 (airpodsGen4) go here once their IDs are known.
     ]
 )
 

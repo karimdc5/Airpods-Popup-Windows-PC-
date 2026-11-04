@@ -38,6 +38,7 @@ class DeviceView:
     family: Family
     items: tuple[ItemView, ...]
     time_left: str | None = None  # e.g. "About 3h 40m left"
+    hud: str = "airpodsGen4"  # which HUD artwork to show
 
     @property
     def lowest_pod_level(self) -> int | None:
@@ -71,7 +72,7 @@ def build_view(
             _item(Part.CASE, "Case", snapshot.case),
             _item(Part.RIGHT, "Right", snapshot.right),
         )
-    return DeviceView(title, subtitle, model.family, items, time_left)
+    return DeviceView(title, subtitle, model.family, items, time_left, model.hud)
 
 
 def _item(part: Part | None, label: str, c: Component) -> ItemView:

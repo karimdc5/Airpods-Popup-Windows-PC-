@@ -107,8 +107,8 @@ class Action(Enum):
 
     HIDDEN = "Connected"  # connected (or nothing to connect)
     CONNECT = "Not connected"
-    CONNECTING = "Connectingâ€¦"
-    FAILED = "Couldnâ€™t connect"
+    CONNECTING = "Connecting…"
+    FAILED = "Couldn’t connect"
 
 
 def battery_color(level: int | None, charging: bool) -> QColor:
@@ -438,7 +438,7 @@ class _Card(QWidget):
 
         p.setFont(_font(PERCENT_PX, QFont.Weight.Medium))
         p.setPen(PERCENT)
-        text = f"{group.level} %" if group.level is not None else "â€”"
+        text = f"{group.level} %" if group.level is not None else "—"
         p.drawText(QRectF(cx - GROUP_W / 2, battery.bottom() + 5, GROUP_W, PERCENT_PX + 4), Qt.AlignmentFlag.AlignCenter, text)
 
 

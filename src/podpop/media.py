@@ -33,6 +33,10 @@ class MediaController:
         """Pause every playing session; resolves True if anything was paused."""
         return self._submit(self._pause)
 
+    def is_playing(self) -> Future[bool]:
+        """Resolves True if any app is playing media right now."""
+        return self._executor.submit(lambda: asyncio.run(self._playing()))
+
     def resume(self) -> Future[bool]:
         """Resume what pause() paused, if it is still paused."""
         return self._submit(self._resume)
@@ -73,6 +77,16 @@ class MediaController:
             self._paused_app = paused
             log.info("Paused %s", paused)
         return paused is not None
+
+    async def _playing(self) -> bool:
+        from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager
+
+        try:
+            manager = await GlobalSystemMediaTransportControlsSessionManager.request_async()
+            return any(s.get_playback_info().playback_status == _PLAYING for s in manager.get_sessions())
+        except Exception:
+            log.exception("Could not read media sessions")
+            return True  # unsure: treat as playing so nothing gets cut off
 
     async def _resume(self) -> bool:
         app, self._paused_app = self._paused_app, None

@@ -19,8 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/popup-dark.png" width="380" alt="PodPop popup in dark mode">
-  <img src="docs/images/popup-light.png" width="380" alt="PodPop popup in light mode">
+  <img src="docs/images/demo.gif" width="460" alt="PodPop opening animation: the case opens, the buds glide out and the battery rings fill">
 </p>
 
 ## Why PodPop?
@@ -31,6 +30,7 @@ and PodPop's protocol work was cross-checked against it. PodPop focuses on
 doing everything **automatically and reliably**:
 
 - It **connects when you open the case**, even taking the AirPods over from your iPhone.
+- It **hands them back to your phone when you lock the PC** and takes them again when you unlock.
 - It **fixes Windows' "connected but no sound" bug** after you walk away and come back.
 - It **pauses your music** when you take a bud out and resumes when you put it back.
 - It **learns your buds' real battery life** to show how much listening time is left.
@@ -57,6 +57,10 @@ already paired in *Settings → Bluetooth & devices*.
   tray icon to see it any time.
 - **Connects automatically** when you open the case, even if the AirPods were
   on your iPhone. There's also a one-click **Connect** button.
+- **Hand-off to your phone.** Lock the PC (<kbd>Win</kbd>+<kbd>L</kbd>) while
+  wearing your AirPods and walk away: PodPop lets go of them so your iPhone
+  can take over. Unlock while wearing them and they come back to the PC. It
+  never cuts off music that's playing on the PC.
 - **Battery for left, right and case**, plus charging state and **in-ear**
   detection.
 - **Battery time left** ("About 3h 40m left"). It starts from Apple's rated
@@ -89,6 +93,9 @@ already paired in *Settings → Bluetooth & devices*.
     <td align="center"><img src="docs/images/popup-dark.png" width="260" alt="AirPods Pro"><br><sub>AirPods Pro / Pro 2</sub></td>
     <td align="center"><img src="docs/images/popup-max.png" width="260" alt="AirPods Max"><br><sub>AirPods Max</sub></td>
   </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/images/popup-light.png" width="260" alt="Light mode"><br><sub>Light mode</sub></td>
+  </tr>
 </table>
 
 ## How it works
@@ -99,6 +106,10 @@ lid/in-ear fields aren't encrypted. PodPop listens through Windows' own BLE
 stack with [bleak](https://github.com/hbldh/bleak) and decodes those bytes.
 Connect and disconnect events come from a WinRT `DeviceWatcher`, and the
 audio connection goes through the Windows Core Audio COM APIs.
+
+**📖 Byte-by-byte write-up: [How PodPop reads your AirPods](docs/protocol.md)**,
+covering the packet layout, a decoded real capture, and the quirks (buds that
+lie about each other, rotating addresses, a case that goes quiet when closed).
 
 ```
  BLE adverts ──► ble.py ──► protocol.py ──► state.Tracker ──┐
@@ -117,6 +128,7 @@ audio connection goes through the Windows Core Audio COM APIs.
 | `audio_connect.py` | Connects, disconnects and checks whether audio is active for a paired headset. |
 | `doctor.py` | Decides when a stuck link needs a reconnect. Pure and tested. |
 | `ear.py` / `media.py` | In-ear changes → pause/resume through Windows media sessions. |
+| `handoff.py` / `session.py` | Releases the AirPods when the PC locks and takes them back on unlock. Pure and tested. |
 | `autostart.py` | Start at sign-in through a per-user Task Scheduler task. |
 | `ui/` | Popup card, vector artwork, opening animation, tray icon, settings window. |
 | `app.py` | Wires everything together on the Qt thread. |
@@ -148,6 +160,7 @@ Handy for development:
 .\.venv\Scripts\python -m podpop --demo pro --nearby        # the "Connect" state
 .\.venv\Scripts\python -m podpop --sniff                    # print decoded adverts live
 .\.venv\Scripts\python -m podpop --debug                    # verbose logging
+.\.venv\Scripts\python scripts\make_demo_gif.py             # re-record docs/images/demo.gif
 ```
 
 Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
@@ -163,6 +176,7 @@ PodPop, then delete `PodPop.exe`. To remove its data too, delete
 - [x] Settings window
 - [x] Global hotkeys
 - [x] Automatic connect when the case opens
+- [x] Hand-off to your phone when the PC locks
 - [ ] Artwork in each AirPods color (the color byte is already decoded)
 
 Issues and pull requests are welcome.

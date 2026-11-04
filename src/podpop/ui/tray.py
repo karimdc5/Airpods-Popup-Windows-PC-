@@ -46,6 +46,7 @@ class Tray(QObject):
     settings_requested = Signal()
     connect_requested = Signal()
     repair_requested = Signal()
+    release_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -65,6 +66,8 @@ class Tray(QObject):
         self._connect.setEnabled(False)
         self._repair = menu.addAction("Reconnect audio (fixes no sound)", self.repair_requested.emit)
         self._repair.setEnabled(False)
+        self._release = menu.addAction("Disconnect (hand to phone)", self.release_requested.emit)
+        self._release.setEnabled(False)
         menu.addSeparator()
         menu.addAction("Settings…", self.settings_requested.emit)
         menu.addAction(f"Quit {APP_NAME}", self.quit_requested.emit)
@@ -91,9 +94,10 @@ class Tray(QObject):
             self._low = low
             self._tray.setIcon(render_icon(low))
 
-    def set_link_actions(self, *, can_connect: bool, can_repair: bool) -> None:
+    def set_link_actions(self, *, can_connect: bool, can_repair: bool, can_release: bool) -> None:
         self._connect.setEnabled(can_connect)
         self._repair.setEnabled(can_repair)
+        self._release.setEnabled(can_release)
 
     def notify(self, title: str, message: str) -> None:
         self._tray.showMessage(title, message, render_icon(), 6000)

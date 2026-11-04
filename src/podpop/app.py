@@ -29,10 +29,12 @@ from .catalog import guess_from_name
 from .connection import ConnectionEvent, ConnectionWatcher
 from .doctor import LinkDoctor
 from .ear import EarAction, EarDetector
+from .handoff import GRACE_S, Handoff
 from .hotkeys import HotkeyManager
 from .media import MediaController
 from .presenter import DeviceView, build_view
 from .runtime import RuntimeEstimator
+from .session import SessionWatcher
 from .protocol import Part
 from .settings import Settings, config_dir
 from .state import Tracker
@@ -61,6 +63,7 @@ class _Bridge(QObject):
     scanner = Signal(object, str)
     connect_done = Signal(str)  # error message, empty on success
     media_paused = Signal(bool)  # whether a pause request paused anything
+    handoff_checked = Signal(bool)  # whether media was playing when the lock grace ran out
 
 
 class PodPopApp(QObject):
@@ -83,6 +86,7 @@ class PodPopApp(QObject):
         self._ear = EarDetector()
         self._last_ears: tuple[bool, bool] | None = None
         self._media = MediaController()
+        self._handoff = Handoff()
 
         self._bridge = _Bridge()
         queued = Qt.ConnectionType.QueuedConnection
@@ -91,6 +95,7 @@ class PodPopApp(QObject):
         self._bridge.scanner.connect(self._on_scanner, queued)
         self._bridge.connect_done.connect(self._on_connect_done, queued)
         self._bridge.media_paused.connect(lambda paused: paused or self._ear.forget_pause(), queued)
+        self._bridge.handoff_checked.connect(self._on_handoff_checked, queued)
         self._ble = BleListener(self._bridge.advert.emit, self._bridge.scanner.emit)
         self._connections = ConnectionWatcher(self._bridge.connection.emit)
 
@@ -104,10 +109,14 @@ class PodPopApp(QObject):
         self._tray.show_requested.connect(self.show_popup)
         self._tray.connect_requested.connect(self.connect_device)
         self._tray.repair_requested.connect(self.repair_audio)
+        self._tray.release_requested.connect(self.release_device)
         self._tray.quit_requested.connect(QApplication.quit)
         QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _: self._apply_theme())
         self._hotkeys = HotkeyManager()
         self._hotkeys.triggered.connect(self._on_hotkey)
+        self._session = SessionWatcher()
+        self._session.locked.connect(self._on_locked)
+        self._session.unlocked.connect(self._on_unlocked)
         self._hotkey_combos: dict[str, str] | None = None
         self._apply_settings()
 
@@ -140,6 +149,7 @@ class PodPopApp(QObject):
         self._ble.stop()
         self._media.shutdown()
         self._hotkeys.clear()
+        self._session.stop()
         self._tray.hide()
 
     def show_popup(self) -> None:
@@ -164,6 +174,19 @@ class PodPopApp(QObject):
             self._start_link_job(audio_connect.reconnect, "Reconnecting")
         else:
             self.connect_device()
+
+    def release_device(self) -> None:
+        """Drop this PC's audio link so another device (your iPhone) can take the AirPods."""
+        target = self._paired_airpods()
+        if not self._audio_connected or self._connecting or target is None:
+            return
+        try:
+            mac = audio_connect.mac_from_device_id(target.device_id)
+        except audio_connect.ConnectError:
+            log.exception("Cannot reach %s", target.name)
+            return
+        log.info("Releasing %s for another device", target.name)
+        threading.Thread(target=self._release_worker, args=(mac,), name="podpop-release", daemon=True).start()
 
     def _start_link_job(self, job, label: str) -> None:
         target = self._paired_airpods()
@@ -284,6 +307,34 @@ class PodPopApp(QObject):
             log.info("Back in range after being away; reconnecting audio in case it is stuck")
             self.repair_audio()
 
+    def _on_locked(self) -> None:
+        wearing = self._tracker.snapshot().in_ear
+        if self._handoff.lock(connected=bool(self._audio_connected), wearing=wearing) and self._settings.handoff_on_lock:
+            QTimer.singleShot(int(GRACE_S * 1000), self._handoff_grace_over)
+
+    def _handoff_grace_over(self) -> None:
+        self._media.is_playing().add_done_callback(lambda f: self._bridge.handoff_checked.emit(f.result()))
+
+    def _on_handoff_checked(self, playing: bool) -> None:
+        wearing = self._tracker.snapshot().in_ear
+        if self._handoff.grace_over(connected=bool(self._audio_connected), wearing=wearing, playing=playing):
+            log.info("PC locked while wearing the AirPods; handing them to your other device")
+            self.release_device()
+        elif playing:
+            log.info("PC locked, but media is playing on it; keeping the AirPods")
+
+    def _on_unlocked(self) -> None:
+        wearing = self._tracker.snapshot().in_ear
+        if self._handoff.unlock(connected=bool(self._audio_connected), wearing=wearing):
+            log.info("Unlocked while wearing the AirPods; taking them back")
+            self.connect_device()
+
+    def _release_worker(self, mac: str) -> None:  # runs on its own thread
+        try:
+            audio_connect.disconnect(mac)
+        except Exception as exc:
+            log.warning("Could not release the AirPods: %s", exc)
+
     def _link_worker(self, job, mac: str, device_name: str) -> None:  # runs on its own thread
         try:
             job(mac, device_name)
@@ -355,6 +406,7 @@ class PodPopApp(QObject):
         self._tray.set_link_actions(
             can_connect=action in (Action.CONNECT, Action.FAILED),
             can_repair=self._paired_airpods() is not None and not self._connecting,
+            can_release=bool(self._audio_connected) and not self._connecting,
         )
         self._popup.set_action(action)
         self._popup.update_view(view)

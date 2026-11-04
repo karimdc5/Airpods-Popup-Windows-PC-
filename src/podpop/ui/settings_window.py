@@ -69,6 +69,7 @@ class SettingsWindow(QWidget):
 
         connection = self._group(layout, "Connection")
         self._auto_connect = self._check(connection, "Connect automatically when the case opens", "auto_connect_on_case_open")
+        self._handoff = self._check(connection, "Hand AirPods to your phone when you lock the PC", "handoff_on_lock")
         self._auto_fix = self._check(connection, "Fix stuck audio after walking away", "auto_fix_audio")
         self._auto_pause = self._check(connection, "Pause media when you take an AirPod out", "auto_pause_on_removal")
 

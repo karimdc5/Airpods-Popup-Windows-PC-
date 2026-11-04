@@ -23,6 +23,18 @@
   <img src="docs/images/popup-light.png" width="380" alt="PodPop popup in light mode">
 </p>
 
+## Why PodPop?
+
+There are a few AirPods tools for Windows.
+[AirPodsDesktop](https://github.com/SpriteOvO/AirPodsDesktop) is the best known,
+and PodPop's protocol work was cross-checked against it. PodPop focuses on
+doing everything **automatically and reliably**:
+
+- It **connects when you open the case**, even taking the AirPods over from your iPhone.
+- It **fixes Windows' "connected but no sound" bug** after you walk away and come back.
+- It **pauses your music** when you take a bud out and resumes when you put it back.
+- It **learns your buds' real battery life** to show how much listening time is left.
+
 ## Download and install
 
 1. Go to the [**latest release**](../../releases/latest) and download **`PodPop.exe`**.

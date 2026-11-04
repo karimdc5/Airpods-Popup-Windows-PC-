@@ -200,7 +200,9 @@ class PodPopApp(QObject):
         if pause_media:
             self._media.pause()  # don't let the PC carry on out of its speakers
         self._handoff.hold(time.monotonic())
-        threading.Thread(target=self._release_worker, args=(mac,), name="podpop-release", daemon=True).start()
+        threading.Thread(
+            target=self._release_worker, args=(mac, target.name), name="podpop-release", daemon=True
+        ).start()
 
     def _start_link_job(self, job, label: str) -> None:
         target = self._paired_airpods()
@@ -240,9 +242,8 @@ class PodPopApp(QObject):
                 self._auto_repair()
         if result.lid_opened:
             log.info("Case opened")
-            # Not mid hand-off: a bud left in the case can report "opened" while you walk off.
-            if self._settings.auto_connect_on_case_open and not self._handoff.holding(time.monotonic()):
-                self.connect_device()
+            if self._settings.auto_connect_on_case_open:
+                self.connect_device()  # also cancels a hand-off: opening the case means "here"
             if self._settings.popup_on_case_open:
                 self.show_popup()
         elif self._pending_popup.isActive() and self._tracker.snapshot().has_fresh_data:
@@ -373,9 +374,9 @@ class PodPopApp(QObject):
         elif playing:
             log.info("Away from the PC, but media is playing on it; keeping the AirPods")
 
-    def _release_worker(self, mac: str) -> None:  # runs on its own thread
+    def _release_worker(self, mac: str, device_name: str) -> None:  # runs on its own thread
         try:
-            audio_connect.disconnect(mac)
+            audio_connect.release(mac, device_name)
         except Exception as exc:
             log.warning("Could not release the AirPods: %s", exc)
 

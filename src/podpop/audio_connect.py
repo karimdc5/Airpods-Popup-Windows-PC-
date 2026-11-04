@@ -327,6 +327,37 @@ def disconnect(mac: str) -> None:
     _oneshot(mac, _Op.DISCONNECT)
 
 
+def release(mac: str, device_name: str | None = None) -> None:
+    """Drop hands-free *and* stereo, so the AirPods are free for another device.
+
+    disconnect() only drops stereo, which is enough to reset a stuck stream,
+    but the hands-free channel keeps the Bluetooth link up: the AirPods still
+    count the PC as theirs, the phone doesn't take over, and Windows reopens
+    stereo over that link a few dozen seconds later.
+    """
+    mac = mac.upper()
+    owns_com = _init_com()
+    try:
+        enumerator = comtypes.CoCreateInstance(_CLSID_MM_DEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
+        stereo = [f.device_id for f in _filters_for(enumerator, mac)]
+        headset = _headset_filters(enumerator, device_name) if device_name else []
+        if not stereo and not headset:
+            raise ConnectError("No Bluetooth audio device found for this address. Is it paired with this PC?")
+        dropped = 0
+        for filter_id in stereo + headset:
+            try:
+                _ks_property(enumerator, filter_id, _Op.DISCONNECT)
+                dropped += 1
+                log.info("Bluetooth disconnect requested via %s", filter_id)
+            except (OSError, comtypes.COMError) as exc:
+                log.info("Disconnect request on %s failed: %s", filter_id, exc)
+        if not dropped:
+            raise ConnectError("Windows refused every disconnect request.")
+    finally:
+        if owns_com:
+            comtypes.CoUninitialize()
+
+
 def reconnect(mac: str, device_name: str | None = None, *, drop_timeout_s: float = 10.0, settle_s: float = 1.0) -> None:
     """Drop and re-open the audio link: the fix for "connected but no sound"."""
     disconnect(mac)

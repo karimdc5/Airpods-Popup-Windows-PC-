@@ -17,12 +17,14 @@ with a live battery tooltip.
   listening time, then learns your buds' real drain rate.
 - **Settings window** (⚙ on the popup, or tray → Settings…): triggers, theme
   (dark by default), monitor, connection behaviour, alert levels, hotkeys,
-  signal threshold, start with Windows. Changes apply immediately.
+  signal threshold, start with Windows (a Task Scheduler logon task). Changes
+  apply immediately.
 - **Global hotkeys**: Ctrl+Alt+A shows the popup; Ctrl+Alt+C connects the
   AirPods (or fixes stuck audio if already connected).
 - Single instance: launching it again just shows the popup.
 - **Connect button**: pulls the AirPods over to this PC (for example from your
-  iPhone) with one click. Optionally connects automatically when the case opens.
+  iPhone) with one click, and by default connects automatically when you open
+  the case (turn that off in Settings if you also use them with your phone).
 - **Stuck-audio fix**: Windows sometimes shows AirPods as connected but plays
   nothing after you walk out of range and back. PodPop notices that you left
   while wearing them and re-opens the audio link once you're back. It never

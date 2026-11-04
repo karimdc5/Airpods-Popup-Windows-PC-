@@ -6,7 +6,9 @@ import argparse
 import ctypes
 import logging
 import logging.handlers
+import os
 import sys
+import threading
 from pathlib import Path
 
 from podpop import APP_NAME, __version__
@@ -33,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     _configure_logging(args.debug)
+    logging.info("Launching %s %s (pid %d)", APP_NAME, __version__, os.getpid())
     settings_path = config_dir() / "settings.json"
     settings = Settings.load(settings_path)
 
@@ -62,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     if not instance.claim():
         logging.info("Already running; asked the existing instance to show the popup")
         return 0
+
+    if getattr(sys, "frozen", False):
+        # Keep the startup entry pointing at this exe (and on the logon task).
+        from podpop import autostart
+
+        threading.Thread(target=autostart.refresh, name="podpop-autostart", daemon=True).start()
 
     app.setWindowIcon(render_icon())
     podpop = PodPopApp(settings, settings_path)

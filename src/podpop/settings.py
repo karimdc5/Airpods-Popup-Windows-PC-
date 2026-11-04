@@ -26,7 +26,7 @@ class Settings:
     popup_on_connect: bool = True
     popup_on_case_open: bool = True
     # Pull the AirPods over to this PC (e.g. from your iPhone) when the case opens.
-    auto_connect_on_case_open: bool = False
+    auto_connect_on_case_open: bool = True
     # Reconnect by itself when you come back in range and the audio got stuck.
     auto_fix_audio: bool = True
     # Pause media when you take an AirPod out; resume when it goes back in.

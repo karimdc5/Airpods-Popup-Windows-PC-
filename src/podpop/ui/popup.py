@@ -1,9 +1,10 @@
 """The battery HUD: a frosted dark card near the top of the screen.
 
-Top to bottom: the device name, the AirPods (they turn once as the card
-appears, then stay still), the batteries the way iOS groups them (the AirPods
-together, the case separately, each a horizontal battery with the bolt inside
-while charging), and the connection status. It sits just above the taskbar, fades in while rising 8 px, stays a
+Top to bottom: the device name; the AirPods on the left (they turn once as
+the card appears, then stay still) and the case on the right, like the iPhone
+popup; under each, centred, its battery (a horizontal battery with the bolt
+inside while charging, the percentage below; buds far apart get one each);
+and the connection status. It sits just above the taskbar, fades in while rising 8 px, stays a
 few seconds, and fades out the same way. There are no buttons; clicking the card connects the AirPods
 when they're not connected, and otherwise just closes it.
 
@@ -63,12 +64,13 @@ PADDING = (16, 20, 16, 18)  # left, top, right, bottom
 TITLE_PX = 17
 CLIP = 130  # the artwork's native size: drawn 1:1, never rescaled
 CLIP_MARGIN = (4, 10)  # above; below, to the battery row
-GLYPH = 13.0
 BOLT_PX = 9.0
 BATTERY_W, BATTERY_H, BATTERY_R = 25.0, 12.0, 3.5
 PERCENT_PX = 13
-GROUP_W = 64
-GROUP_GAP = 36
+GROUP_W = 52
+BUD_GROUP_GAP = 14  # between the L and R batteries when the buds are split
+CASE_W = 104  # the case's column, right of the 130 px buds
+ART_GAP = 14
 SPLIT_AT = 10  # buds further apart than this (in %) get a battery each, like iOS
 STATUS_PX = 12
 STATUS_GAP = 12
@@ -294,6 +296,7 @@ class _Card(QWidget):
         self.animate = True
         self._started = time.monotonic()
         self._spin = _Spin(self.update, self.spin_finished.emit)
+        self._case_art: QPixmap | None = None
         self._tick = QTimer(self, interval=33)  # drives the fallback model's single turn
         self._tick.timeout.connect(self._fallback_tick)
 
@@ -305,6 +308,8 @@ class _Card(QWidget):
     def set_view(self, view: DeviceView) -> None:
         if self.view is None or self.view.hud != view.hud:
             self._spin.load(hud.spin_for(view.hud), hud.still_for(view.hud))
+            case = hud.case_for(view.hud)
+            self._case_art = QPixmap(str(case)) if case is not None else None
         self.view = view
         self.update()
 
@@ -368,15 +373,28 @@ class _Card(QWidget):
         p.drawText(QRectF(PADDING[0], y, inner, TITLE_PX + 5), Qt.AlignmentFlag.AlignCenter, title)
         y += TITLE_PX + 5 + CLIP_MARGIN[0]
 
-        self._paint_clip(p, QRectF((w - CLIP) / 2, y, CLIP, CLIP))
+        groups = battery_groups(self.view)
+        case_group = next((g for g in groups if g.kind == "case"), None)
+        bud_groups = [g for g in groups if g.kind != "case"]
+        if case_group is not None:  # buds left, case right, the pair centred on the card
+            row_w = CLIP + ART_GAP + CASE_W
+            buds_box = QRectF((w - row_w) / 2, y, CLIP, CLIP)
+            case_box = QRectF(buds_box.right() + ART_GAP, y, CASE_W, CLIP)
+            self._paint_clip(p, buds_box)
+            self._paint_case(p, case_box)
+        else:
+            buds_box = QRectF((w - CLIP) / 2, y, CLIP, CLIP)
+            self._paint_clip(p, buds_box)
         y += CLIP + CLIP_MARGIN[1]
 
-        groups = battery_groups(self.view)
-        row_w = len(groups) * GROUP_W + (len(groups) - 1) * GROUP_GAP
-        x = (w - row_w) / 2
-        for group in groups:
+        # Each battery centred under its own artwork.
+        span = len(bud_groups) * GROUP_W + (len(bud_groups) - 1) * BUD_GROUP_GAP
+        x = buds_box.center().x() - span / 2
+        for group in bud_groups:
             self._paint_group(p, x + GROUP_W / 2, y, group)
-            x += GROUP_W + GROUP_GAP
+            x += GROUP_W + BUD_GROUP_GAP
+        if case_group is not None:
+            self._paint_group(p, case_box.center().x(), y, case_group)
         y += _battery_row_h() + STATUS_GAP
 
         p.setFont(_font(STATUS_PX, QFont.Weight.Normal))
@@ -400,11 +418,24 @@ class _Card(QWidget):
         elif self.view.family is Family.HEADPHONES:
             paint_headphones(p, box.adjusted(18, 22, -18, -22), DARK)
 
-    def _paint_group(self, p: QPainter, cx: float, top: float, group: BatteryGroup) -> None:
-        glyph_w = GLYPH * (1.55 if group.kind == "pair" else 1.0)
-        _paint_glyph(p, QRectF(cx - glyph_w / 2, top, glyph_w, GLYPH), group.kind)
+    def _paint_case(self, p: QPainter, box: QRectF) -> None:
+        """The case beside the buds: your ``<name>_case.png`` if there is one, else PodPop's own, front-on."""
+        image = self._case_art
+        if image is None:
+            sprites = turntable.frames(self.view.family, "case")
+            image = sprites[0] if sprites else None
+        if image is None or image.isNull():
+            return
+        # Bottom-aligned with the buds, a little narrower than its column so it sits like iOS.
+        scale = min((box.width() - 6) / image.width(), (box.height() * 0.62) / image.height())
+        w, h = image.width() * scale, image.height() * scale
+        target = QRectF(box.center().x() - w / 2, box.bottom() - h - box.height() * 0.08, w, h)
+        p.drawPixmap(target, image, QRectF(image.rect()))
 
-        battery = QRectF(cx - BATTERY_W / 2, top + GLYPH + 6, BATTERY_W, BATTERY_H)
+    def _paint_group(self, p: QPainter, cx: float, top: float, group: BatteryGroup) -> None:
+        battery = QRectF(cx - BATTERY_W / 2, top, BATTERY_W, BATTERY_H)
+        if group.kind in ("left", "right"):  # split buds: say which is which, just left of the battery
+            _paint_side_label(p, QRectF(battery.left() - 14, battery.top() - 2, 11, BATTERY_H + 4), group.kind)
         _paint_battery(p, battery, group.level, group.charging)
 
         p.setFont(_font(PERCENT_PX, QFont.Weight.Medium))
@@ -438,50 +469,16 @@ def _rounded(rect: QRectF, radius: float) -> QPainterPath:
     return path
 
 
-def _battery_row_h() -> float:
-    return GLYPH + 6 + BATTERY_H + 5 + PERCENT_PX + 4
-
-
-def _paint_glyph(p: QPainter, r: QRectF, kind: str) -> None:
-    """13 px silhouettes in the spirit of SF Symbols' airpods / airpods.chargingcase.
-
-    Bud: a slim stem under a small bulb, the ear nozzle pointing up and out
-    (up-right for the left bud, mirrored for the right). Case: a rounded
-    square base with its lid lifted above it, seen from the front.
-    """
-    if kind == "pair":  # two buds side by side, nozzles facing each other
-        half = r.width() / 2
-        _paint_glyph(p, QRectF(r.left(), r.top(), half, r.height()), "left")
-        _paint_glyph(p, QRectF(r.left() + half, r.top(), half, r.height()), "right")
-        return
+def _paint_side_label(p: QPainter, r: QRectF, kind: str) -> None:
     p.save()
-    p.translate(r.topLeft())
-    p.scale(r.width() / 13.0, r.height() / 13.0)  # drawn on a 13 x 13 grid
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(GLYPH_COLOR)
-    if kind == "headphones":
-        band = QPainterPath(QPointF(2.6, 7.5))
-        band.cubicTo(2.6, 0.6, 10.4, 0.6, 10.4, 7.5)
-        p.strokePath(band, QPen(GLYPH_COLOR, 1.5))
-        p.drawRoundedRect(QRectF(1.0, 6.4, 3.4, 5.8), 1.4, 1.4)
-        p.drawRoundedRect(QRectF(8.6, 6.4, 3.4, 5.8), 1.4, 1.4)
-    elif kind == "case":
-        p.drawRoundedRect(QRectF(1.0, 5.6, 11.0, 6.9), 2.6, 2.6)  # base
-        lid = QPainterPath()
-        lid.addRoundedRect(QRectF(1.4, 0.9, 10.2, 3.1), 1.5, 1.5)  # lid, lifted open
-        p.drawPath(lid)
-        p.fillRect(QRectF(5.4, 4.0, 2.2, 1.6), GLYPH_COLOR)  # the hinge joining them
-    else:
-        if kind == "right":
-            p.translate(13.0, 0)
-            p.scale(-1, 1)
-        bud = QPainterPath()
-        bud.addEllipse(QPointF(5.2, 3.6), 2.9, 2.7)  # bulb
-        bud.addEllipse(QPointF(7.9, 2.2), 1.45, 1.3)  # nozzle, up and out
-        bud.addRoundedRect(QRectF(3.5, 4.2, 1.9, 8.4), 0.95, 0.95)  # stem
-        bud.setFillRule(Qt.FillRule.WindingFill)
-        p.drawPath(bud)
+    p.setFont(_font(10, QFont.Weight.DemiBold))
+    p.setPen(GLYPH_COLOR)
+    p.drawText(r, Qt.AlignmentFlag.AlignCenter, "L" if kind == "left" else "R")
     p.restore()
+
+
+def _battery_row_h() -> float:
+    return BATTERY_H + 5 + PERCENT_PX + 4
 
 
 def _paint_bolt(p: QPainter, r: QRectF) -> None:

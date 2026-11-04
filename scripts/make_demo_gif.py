@@ -24,7 +24,7 @@ from podpop.ui.popup import PopupWindow  # noqa: E402
 from podpop.ui.theme import DARK, LIGHT  # noqa: E402
 
 FRAME_MS = 40  # 25 fps
-RECORD_MS = 6000  # one full turn of the buds and case, the batteries filling
+RECORD_MS = 4000  # one full sway of the buds, there and back
 HOLD_MS = 40  # the turn loops seamlessly
 PAD = 36
 BACKDROP = ((38, 44, 92), (112, 58, 120))  # top-left -> bottom-right, readable on light and dark pages

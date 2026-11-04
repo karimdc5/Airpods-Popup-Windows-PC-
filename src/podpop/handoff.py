@@ -10,6 +10,12 @@ so your iPhone can't take over. With hand-off:
   default);
 * PodPop drops this PC's audio link, which frees the AirPods for your phone.
 
+Windows reconnects paired headphones by itself as soon as they're free, and
+as the last device they used it usually beats the phone to them. So for
+``HOLD_S`` after a hand-off, the app lets go again whenever Windows grabs them
+back on its own, until the phone has them (the PC's Bluetooth link drops) or
+you connect them to the PC yourself.
+
 When you're back (any keyboard or mouse input), the app shows the popup so
 one click on Connect brings them back. It never takes them back on its own,
 so it can't pull them off your phone in the middle of a call.
@@ -20,6 +26,7 @@ Pure logic; the app reads the idle time and does the Bluetooth work.
 from __future__ import annotations
 
 AWAY_S = 120.0
+HOLD_S = 120.0
 
 
 class Handoff:
@@ -28,6 +35,7 @@ class Handoff:
         self._released = False
         self._kept = False  # checked this time away, but media was playing
         self._checking = False
+        self._hold_until = float("-inf")
 
     def due(self, *, idle_s: float, connected: bool, wearing: bool) -> bool:
         """True means: you look away; check whether media is playing, then call confirm()."""
@@ -48,6 +56,18 @@ class Handoff:
             self._released = True
             return True
         return False
+
+    def hold(self, now: float) -> None:
+        """Call after releasing them: start keeping Windows off them."""
+        self._hold_until = now + HOLD_S
+
+    def holding(self, now: float) -> bool:
+        """True while Windows reconnecting by itself should be undone."""
+        return now < self._hold_until
+
+    def end_hold(self) -> None:
+        """Call when the phone has them, or when you connect them to the PC yourself."""
+        self._hold_until = float("-inf")
 
     def back(self, *, idle_s: float) -> bool:
         """Call regularly. True means: you're back after a hand-off; offer to reconnect."""

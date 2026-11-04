@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
@@ -49,6 +50,10 @@ log = logging.getLogger(__name__)
 # the popup anyway, so it usually opens with real numbers.
 FIRST_ADVERT_WAIT_MS = 2500
 REFRESH_MS = 5000
+# A gap this long between refresh ticks means the PC was asleep.
+WAKE_GAP_S = 30.0
+# Log an ignored case-open packet at most this often.
+IGNORED_LID_LOG_S = 30.0
 AUDIO_POLL_MS = 1500
 # How long to wait for the audio to come up after asking Windows to connect.
 CONNECT_TIMEOUT_MS = 35000  # covers a full reconnect cycle
@@ -87,6 +92,8 @@ class PodPopApp(QObject):
         self._ear = EarDetector()
         self._last_ears: tuple[bool, bool] | None = None
         self._media = MediaController()
+        self._last_tick = time.monotonic()
+        self._ignored_lid_logged = float("-inf")
         self._handoff = Handoff()
 
         self._bridge = _Bridge()
@@ -121,7 +128,7 @@ class PodPopApp(QObject):
         self._pending_popup = QTimer(self, singleShot=True, interval=FIRST_ADVERT_WAIT_MS)
         self._pending_popup.timeout.connect(self.show_popup)
         self._refresh_timer = QTimer(self, interval=REFRESH_MS)
-        self._refresh_timer.timeout.connect(self._refresh)  # lets readings age into "stale"
+        self._refresh_timer.timeout.connect(self._tick)  # lets readings age into "stale"
         self._audio_timer = QTimer(self, interval=AUDIO_POLL_MS)
         self._audio_timer.timeout.connect(self._check_audio)
         self._connect_timeout = QTimer(self, singleShot=True, interval=CONNECT_TIMEOUT_MS)
@@ -168,6 +175,7 @@ class PodPopApp(QObject):
 
     def connect_device(self) -> None:
         """Ask Windows to connect the paired AirPods, e.g. taking them from an iPhone."""
+        self._handoff.end_hold()  # you want them here now
         if not self._audio_connected:
             self._start_link_job(audio_connect.connect, "Connecting")
 
@@ -178,7 +186,7 @@ class PodPopApp(QObject):
         else:
             self.connect_device()
 
-    def release_device(self) -> None:
+    def release_device(self, *, pause_media: bool = True) -> None:
         """Drop this PC's audio link so another device (your iPhone) can take the AirPods."""
         target = self._paired_airpods()
         if not self._audio_connected or self._connecting or target is None:
@@ -189,6 +197,9 @@ class PodPopApp(QObject):
             log.exception("Cannot reach %s", target.name)
             return
         log.info("Releasing %s for another device", target.name)
+        if pause_media:
+            self._media.pause()  # don't let the PC carry on out of its speakers
+        self._handoff.hold(time.monotonic())
         threading.Thread(target=self._release_worker, args=(mac,), name="podpop-release", daemon=True).start()
 
     def _start_link_job(self, job, label: str) -> None:
@@ -213,6 +224,8 @@ class PodPopApp(QObject):
     def _on_advert(self, advert: Advert) -> None:
         result = self._tracker.feed(advert.report, advert.rssi)
         r = advert.report
+        if r.lid_open and not result.accepted:
+            self._log_ignored_lid(advert)
         log.debug(
             "advert %s %ddBm from=%s status=%02x L=%s%s R=%s%s accepted=%s",
             advert.address[-5:], advert.rssi, r.broadcaster.value, advert.payload[5],
@@ -227,7 +240,8 @@ class PodPopApp(QObject):
                 self._auto_repair()
         if result.lid_opened:
             log.info("Case opened")
-            if self._settings.auto_connect_on_case_open:
+            # Not mid hand-off: a bud left in the case can report "opened" while you walk off.
+            if self._settings.auto_connect_on_case_open and not self._handoff.holding(time.monotonic()):
                 self.connect_device()
             if self._settings.popup_on_case_open:
                 self.show_popup()
@@ -238,8 +252,31 @@ class PodPopApp(QObject):
                 self._save_runtime()
             self._refresh()
 
+    def _tick(self) -> None:
+        now = time.monotonic()
+        if now - self._last_tick > WAKE_GAP_S:
+            log.info("PC woke up after %.0fs; restarting Bluetooth scanning", now - self._last_tick)
+            self._ble.restart()
+        self._last_tick = now
+        self._refresh()
+
+    def _log_ignored_lid(self, advert: Advert) -> None:
+        # So a missed popup can be explained from the log.
+        now = time.monotonic()
+        if now - self._ignored_lid_logged < IGNORED_LID_LOG_S:
+            return
+        self._ignored_lid_logged = now
+        if advert.rssi < self._settings.min_rssi:
+            reason = f"weaker than the {self._settings.min_rssi} dBm signal threshold"
+        else:
+            reason = "doesn't look like the AirPods being shown"
+        log.info("Ignored an open-case packet at %d dBm: %s", advert.rssi, reason)
+
     def _on_connection(self, event: ConnectionEvent) -> None:
         if self._name_filter.search(event.name):
+            if not event.connected and self._handoff.holding(time.monotonic()):
+                log.info("AirPods left this PC; hand-off done")
+                self._handoff.end_hold()
             self._check_audio()  # Windows saw a link change; don't wait for the next poll
 
     def _on_scanner(self, state: ScannerState, detail: str) -> None:
@@ -263,6 +300,11 @@ class PodPopApp(QObject):
             return
         self._audio_connected = connected
         log.info("AirPods audio %s%s", "connected" if connected else "disconnected", " (already)" if initial else "")
+        if connected and not initial and not self._connecting and self._handoff.holding(time.monotonic()):
+            log.info("Windows took the AirPods back during a hand-off; releasing them again")
+            self.release_device(pause_media=False)
+            self._refresh()
+            return
         if not initial and not self._connecting and self._doctor.audio_changed(connected=connected):
             QTimer.singleShot(REPAIR_DELAY_MS, self._auto_repair)
         if connected:

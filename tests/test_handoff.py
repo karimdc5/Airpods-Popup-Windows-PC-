@@ -41,3 +41,16 @@ def test_custom_away_time():
     h = Handoff(away_s=300)
     assert not h.due(idle_s=200, connected=True, wearing=True)
     assert h.due(idle_s=301, connected=True, wearing=True)
+
+
+def test_hold_after_release_until_done_or_expired():
+    from podpop.handoff import HOLD_S
+
+    h = Handoff()
+    assert not h.holding(0)
+    h.hold(100)
+    assert h.holding(100 + HOLD_S - 1)  # Windows grabbing them back now gets undone
+    assert not h.holding(100 + HOLD_S + 1)
+    h.hold(200)
+    h.end_hold()  # phone took them, or you pressed Connect
+    assert not h.holding(201)

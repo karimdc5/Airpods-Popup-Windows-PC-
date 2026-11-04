@@ -61,6 +61,10 @@ class BleListener:
         self._thread.start()
         ready.wait()
 
+    def restart(self) -> None:
+        """Restart scanning soon, e.g. after the PC wakes (the watcher can stop silently)."""
+        self._last_advert = float("-inf")  # the watchdog restarts it on its next check
+
     def stop(self) -> None:
         if self._thread is None or self._loop is None or self._stop is None:
             return
@@ -90,8 +94,12 @@ class BleListener:
                     while not self._stop.is_set():
                         if await self._sleep(5.0):
                             return
-                        if time.monotonic() - self._last_advert > WATCHDOG_S:
-                            log.info("No Apple adverts for %.0fs, restarting scanner", WATCHDOG_S)
+                        quiet = time.monotonic() - self._last_advert
+                        if quiet > WATCHDOG_S:
+                            if quiet == float("inf"):
+                                log.info("Restarting scanner")
+                            else:
+                                log.info("No Apple adverts for %.0fs, restarting scanner", WATCHDOG_S)
                             break
             except Exception as exc:  # bleak raises several types (BleakError, OSError, WinError…)
                 log.warning("BLE scanner unavailable: %s", exc)

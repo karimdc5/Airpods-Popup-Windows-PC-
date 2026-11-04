@@ -69,7 +69,10 @@ class SettingsWindow(QWidget):
 
         connection = self._group(layout, "Connection")
         self._auto_connect = self._check(connection, "Connect automatically when the case opens", "auto_connect_on_case_open")
-        self._handoff = self._check(connection, "Hand AirPods to your phone when you lock the PC", "handoff_on_lock")
+        self._handoff = self._check(connection, "Hand AirPods to your phone when you step away", "handoff_when_away")
+        self._away = QSpinBox(suffix=" min", minimum=1, maximum=30)
+        self._away.valueChanged.connect(lambda v: self._set("handoff_away_minutes", int(v)))
+        connection.addRow("Away after", self._away)
         self._auto_fix = self._check(connection, "Fix stuck audio after walking away", "auto_fix_audio")
         self._auto_pause = self._check(connection, "Pause media when you take an AirPod out", "auto_pause_on_removal")
 
@@ -89,6 +92,7 @@ class SettingsWindow(QWidget):
         shortcuts = self._group(layout, "Keyboard shortcuts")
         self._hotkey_show = self._hotkey_row(shortcuts, "Show battery", "hotkey_show_popup")
         self._hotkey_connect = self._hotkey_row(shortcuts, "Connect / fix audio", "hotkey_connect")
+        self._hotkey_handoff = self._hotkey_row(shortcuts, "Hand to phone", "hotkey_handoff")
         self._hotkey_error = QLabel()
         self._hotkey_error.setStyleSheet("color: #FF453A;")
         self._hotkey_error.hide()
@@ -146,6 +150,8 @@ class SettingsWindow(QWidget):
             self._second.setValue(thresholds[1])
             self._hotkey_show.setKeySequence(QKeySequence(s.hotkey_show_popup))
             self._hotkey_connect.setKeySequence(QKeySequence(s.hotkey_connect))
+            self._hotkey_handoff.setKeySequence(QKeySequence(s.hotkey_handoff))
+            self._away.setValue(s.handoff_away_minutes)
             self._rssi.setValue(s.min_rssi)
             self._rssi_changed(s.min_rssi)
             self._startup.setChecked(autostart.is_enabled())

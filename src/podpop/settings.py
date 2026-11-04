@@ -27,8 +27,9 @@ class Settings:
     popup_on_case_open: bool = True
     # Pull the AirPods over to this PC (e.g. from your iPhone) when the case opens.
     auto_connect_on_case_open: bool = True
-    # Lock the PC while wearing them: free them for your phone; unlock: take them back.
-    handoff_on_lock: bool = True
+    # Step away while wearing them (no keyboard/mouse, nothing playing): free them for your phone.
+    handoff_when_away: bool = True
+    handoff_away_minutes: int = 2
     # Reconnect by itself when you come back in range and the audio got stuck.
     auto_fix_audio: bool = True
     # Pause media when you take an AirPod out; resume when it goes back in.
@@ -36,6 +37,7 @@ class Settings:
     # System-wide shortcuts; empty disables. Needs Ctrl, Alt or Win.
     hotkey_show_popup: str = "Ctrl+Alt+A"
     hotkey_connect: str = "Ctrl+Alt+C"  # connect, or fix stuck audio if already connected
+    hotkey_handoff: str = "Ctrl+Alt+P"  # hand the AirPods to your phone now
     popup_duration_s: float = 7.0
     popup_follows_mouse: bool = False  # False: always on the primary monitor
     popup_intro_animation: bool = True  # case pulls back, opens, buds come out

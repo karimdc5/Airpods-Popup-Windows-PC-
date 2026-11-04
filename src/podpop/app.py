@@ -29,12 +29,12 @@ from .catalog import guess_from_name
 from .connection import ConnectionEvent, ConnectionWatcher
 from .doctor import LinkDoctor
 from .ear import EarAction, EarDetector
-from .handoff import GRACE_S, Handoff
+from .handoff import Handoff
 from .hotkeys import HotkeyManager
 from .media import MediaController
 from .presenter import DeviceView, build_view
 from .runtime import RuntimeEstimator
-from .session import SessionWatcher
+from .idle import idle_seconds
 from .protocol import Part
 from .settings import Settings, config_dir
 from .state import Tracker
@@ -55,6 +55,7 @@ CONNECT_TIMEOUT_MS = 35000  # covers a full reconnect cycle
 # Let a link that Windows re-opened by itself settle before judging it.
 REPAIR_DELAY_MS = 3000
 EAR_TICK_MS = 200
+AWAY_POLL_MS = 5000
 
 
 class _Bridge(QObject):
@@ -63,7 +64,7 @@ class _Bridge(QObject):
     scanner = Signal(object, str)
     connect_done = Signal(str)  # error message, empty on success
     media_paused = Signal(bool)  # whether a pause request paused anything
-    handoff_checked = Signal(bool)  # whether media was playing when the lock grace ran out
+    handoff_checked = Signal(bool)  # whether media was playing when you stepped away
 
 
 class PodPopApp(QObject):
@@ -114,9 +115,6 @@ class PodPopApp(QObject):
         QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _: self._apply_theme())
         self._hotkeys = HotkeyManager()
         self._hotkeys.triggered.connect(self._on_hotkey)
-        self._session = SessionWatcher()
-        self._session.locked.connect(self._on_locked)
-        self._session.unlocked.connect(self._on_unlocked)
         self._hotkey_combos: dict[str, str] | None = None
         self._apply_settings()
 
@@ -130,6 +128,8 @@ class PodPopApp(QObject):
         self._connect_timeout.timeout.connect(lambda: self._finish_connect(failed=True))
         self._ear_timer = QTimer(self, interval=EAR_TICK_MS)  # runs only while a reading settles
         self._ear_timer.timeout.connect(lambda: self._handle_ear(self._ear.tick()))
+        self._away_timer = QTimer(self, interval=AWAY_POLL_MS)
+        self._away_timer.timeout.connect(self._check_away)
 
     def start(self) -> None:
         self._tray.show()
@@ -140,16 +140,19 @@ class PodPopApp(QObject):
             log.exception("Bluetooth connection watcher unavailable")
         self._refresh_timer.start()
         self._audio_timer.start()
+        self._away_timer.start()
         self._refresh()
 
     def shutdown(self) -> None:
-        for timer in (self._refresh_timer, self._audio_timer, self._connect_timeout, self._pending_popup, self._ear_timer):
+        for timer in (
+            self._refresh_timer, self._audio_timer, self._connect_timeout, self._pending_popup, self._ear_timer,
+            self._away_timer,
+        ):
             timer.stop()
         self._connections.stop()
         self._ble.stop()
         self._media.shutdown()
         self._hotkeys.clear()
-        self._session.stop()
         self._tray.hide()
 
     def show_popup(self) -> None:
@@ -307,27 +310,26 @@ class PodPopApp(QObject):
             log.info("Back in range after being away; reconnecting audio in case it is stuck")
             self.repair_audio()
 
-    def _on_locked(self) -> None:
+    def _check_away(self) -> None:
+        idle = idle_seconds()
+        if self._handoff.back(idle_s=idle):
+            if not self._audio_connected:
+                log.info("Back at the PC after a hand-off; offering to reconnect")
+                self.show_popup()  # one click on Connect brings them back
+            return
+        if not self._settings.handoff_when_away or self._connecting:
+            return
         wearing = self._tracker.snapshot().in_ear
-        if self._handoff.lock(connected=bool(self._audio_connected), wearing=wearing) and self._settings.handoff_on_lock:
-            QTimer.singleShot(int(GRACE_S * 1000), self._handoff_grace_over)
-
-    def _handoff_grace_over(self) -> None:
-        self._media.is_playing().add_done_callback(lambda f: self._bridge.handoff_checked.emit(f.result()))
+        if self._handoff.due(idle_s=idle, connected=bool(self._audio_connected), wearing=wearing):
+            self._media.is_playing().add_done_callback(lambda f: self._bridge.handoff_checked.emit(f.result()))
 
     def _on_handoff_checked(self, playing: bool) -> None:
         wearing = self._tracker.snapshot().in_ear
-        if self._handoff.grace_over(connected=bool(self._audio_connected), wearing=wearing, playing=playing):
-            log.info("PC locked while wearing the AirPods; handing them to your other device")
+        if self._handoff.confirm(playing=playing, connected=bool(self._audio_connected), wearing=wearing):
+            log.info("Away from the PC while wearing the AirPods; handing them to your other device")
             self.release_device()
         elif playing:
-            log.info("PC locked, but media is playing on it; keeping the AirPods")
-
-    def _on_unlocked(self) -> None:
-        wearing = self._tracker.snapshot().in_ear
-        if self._handoff.unlock(connected=bool(self._audio_connected), wearing=wearing):
-            log.info("Unlocked while wearing the AirPods; taking them back")
-            self.connect_device()
+            log.info("Away from the PC, but media is playing on it; keeping the AirPods")
 
     def _release_worker(self, mac: str) -> None:  # runs on its own thread
         try:
@@ -423,7 +425,12 @@ class PodPopApp(QObject):
         self._popup.follow_cursor = self._settings.popup_follows_mouse
         self._popup.intro_enabled = self._settings.popup_intro_animation
         self._apply_theme()
-        combos = {"show": self._settings.hotkey_show_popup, "connect": self._settings.hotkey_connect}
+        self._handoff.away_s = self._settings.handoff_away_minutes * 60.0
+        combos = {
+            "show": self._settings.hotkey_show_popup,
+            "connect": self._settings.hotkey_connect,
+            "handoff": self._settings.hotkey_handoff,
+        }
         if combos != self._hotkey_combos:
             self._hotkey_combos = combos
             failed = self._hotkeys.set_hotkeys(combos)
@@ -447,6 +454,8 @@ class PodPopApp(QObject):
         elif name == "connect":
             self.repair_audio() if self._audio_connected else self.connect_device()
             self.show_popup()
+        elif name == "handoff":
+            self.release_device()
 
     def _save_settings(self) -> None:
         try:

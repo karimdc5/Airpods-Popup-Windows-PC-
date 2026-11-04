@@ -30,7 +30,7 @@ and PodPop's protocol work was cross-checked against it. PodPop focuses on
 doing everything **automatically and reliably**:
 
 - It **connects when you open the case**, even taking the AirPods over from your iPhone.
-- It **hands them back to your phone when you lock the PC** and takes them again when you unlock.
+- It **hands them to your phone when you step away from the PC** while wearing them.
 - It **fixes Windows' "connected but no sound" bug** after you walk away and come back.
 - It **pauses your music** when you take a bud out and resumes when you put it back.
 - It **learns your buds' real battery life** to show how much listening time is left.
@@ -57,10 +57,11 @@ already paired in *Settings → Bluetooth & devices*.
   tray icon to see it any time.
 - **Connects automatically** when you open the case, even if the AirPods were
   on your iPhone. There's also a one-click **Connect** button.
-- **Hand-off to your phone.** Lock the PC (<kbd>Win</kbd>+<kbd>L</kbd>) while
-  wearing your AirPods and walk away: PodPop lets go of them so your iPhone
-  can take over. Unlock while wearing them and they come back to the PC. It
-  never cuts off music that's playing on the PC.
+- **Hand-off to your phone.** Walk away from the PC wearing your AirPods,
+  and after 2 minutes without keyboard or mouse input PodPop lets go of them
+  so your iPhone can take over. Back at the PC, the popup offers **Connect**.
+  It never cuts off music that's playing on the PC. Or press
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> to hand them over right away.
 - **Battery for left, right and case**, plus charging state and **in-ear**
   detection.
 - **Battery time left** ("About 3h 40m left"). It starts from Apple's rated
@@ -75,8 +76,9 @@ already paired in *Settings → Bluetooth & devices*.
   Light and dark themes, and an opening animation where the lid opens and
   the buds glide out.
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
-  battery, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
-  audio.
+  battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
+  audio, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> hands the AirPods to
+  your phone.
 - **Settings window** (⚙ on the popup, or right-click the tray icon). Every
   feature above can be switched on or off, and changes apply immediately.
 
@@ -128,7 +130,7 @@ lie about each other, rotating addresses, a case that goes quiet when closed).
 | `audio_connect.py` | Connects, disconnects and checks whether audio is active for a paired headset. |
 | `doctor.py` | Decides when a stuck link needs a reconnect. Pure and tested. |
 | `ear.py` / `media.py` | In-ear changes → pause/resume through Windows media sessions. |
-| `handoff.py` / `session.py` | Releases the AirPods when the PC locks and takes them back on unlock. Pure and tested. |
+| `handoff.py` / `idle.py` | Releases the AirPods to your phone when you step away from the PC. Pure and tested. |
 | `autostart.py` | Start at sign-in through a per-user Task Scheduler task. |
 | `ui/` | Popup card, vector artwork, opening animation, tray icon, settings window. |
 | `app.py` | Wires everything together on the Qt thread. |
@@ -176,7 +178,7 @@ PodPop, then delete `PodPop.exe`. To remove its data too, delete
 - [x] Settings window
 - [x] Global hotkeys
 - [x] Automatic connect when the case opens
-- [x] Hand-off to your phone when the PC locks
+- [x] Hand-off to your phone when you step away
 - [ ] Artwork in each AirPods color (the color byte is already decoded)
 
 Issues and pull requests are welcome.

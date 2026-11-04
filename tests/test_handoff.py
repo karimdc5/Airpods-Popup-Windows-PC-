@@ -1,43 +1,43 @@
-from podpop.handoff import Handoff
+from podpop.handoff import AWAY_S, Handoff
+
+AWAY = AWAY_S + 1
 
 
-def test_lock_while_wearing_releases_then_unlock_takes_back():
+def test_step_away_releases_then_coming_back_offers_connect():
     h = Handoff()
-    assert h.lock(connected=True, wearing=True)
-    assert h.grace_over(connected=True, wearing=True, playing=False)
-    assert h.unlock(connected=False, wearing=True)
-
-
-def test_quick_unlock_does_nothing():
-    h = Handoff()
-    assert h.lock(connected=True, wearing=True)
-    assert not h.unlock(connected=True, wearing=True)  # back within the grace period
-    assert not h.grace_over(connected=True, wearing=True, playing=False)  # stale timer
+    assert not h.due(idle_s=10, connected=True, wearing=True)  # still at the PC
+    assert h.due(idle_s=AWAY, connected=True, wearing=True)
+    assert h.confirm(playing=False, connected=True, wearing=True)
+    assert not h.due(idle_s=AWAY + 60, connected=True, wearing=True)  # only once per time away
+    assert not h.back(idle_s=AWAY + 60)  # still away
+    assert h.back(idle_s=0.5)  # touched the mouse
+    assert not h.back(idle_s=0.5)
 
 
 def test_keeps_airpods_playing_from_this_pc():
     h = Handoff()
-    assert h.lock(connected=True, wearing=True)
-    assert not h.grace_over(connected=True, wearing=True, playing=True)
-    assert not h.unlock(connected=True, wearing=True)
+    assert h.due(idle_s=AWAY, connected=True, wearing=True)
+    assert not h.confirm(playing=True, connected=True, wearing=True)
+    assert not h.due(idle_s=AWAY + 300, connected=True, wearing=True)  # don't re-check every tick
+    assert not h.back(idle_s=1)  # nothing was released, so nothing to offer
+    assert h.due(idle_s=AWAY, connected=True, wearing=True)  # next time away is checked again
 
 
 def test_ignores_airpods_not_worn_or_not_on_this_pc():
     h = Handoff()
-    assert not h.lock(connected=True, wearing=False)  # in the case: they let go by themselves
-    assert not h.lock(connected=False, wearing=True)  # already on the phone
-    assert not h.unlock(connected=False, wearing=True)  # never took them, so never takes them back
+    assert not h.due(idle_s=AWAY, connected=True, wearing=False)  # in the case: they let go by themselves
+    assert not h.due(idle_s=AWAY, connected=False, wearing=True)  # already on the phone
 
 
-def test_buds_taken_out_during_grace_are_left_alone():
+def test_buds_taken_out_during_the_check_are_left_alone():
     h = Handoff()
-    assert h.lock(connected=True, wearing=True)
-    assert not h.grace_over(connected=True, wearing=False, playing=False)
+    assert h.due(idle_s=AWAY, connected=True, wearing=True)
+    assert not h.due(idle_s=AWAY, connected=True, wearing=True)  # check still running
+    assert not h.confirm(playing=False, connected=True, wearing=False)
+    assert not h.back(idle_s=1)
 
 
-def test_unlock_without_wearing_them_leaves_them_on_the_phone():
-    h = Handoff()
-    h.lock(connected=True, wearing=True)
-    assert h.grace_over(connected=True, wearing=True, playing=False)
-    assert not h.unlock(connected=False, wearing=False)
-    assert not h.unlock(connected=False, wearing=True)  # only once per hand-off
+def test_custom_away_time():
+    h = Handoff(away_s=300)
+    assert not h.due(idle_s=200, connected=True, wearing=True)
+    assert h.due(idle_s=301, connected=True, wearing=True)

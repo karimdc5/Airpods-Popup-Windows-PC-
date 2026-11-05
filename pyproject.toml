@@ -45,7 +45,7 @@ podpop = "podpop.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-podpop = ["assets/turntable/*.png"]
+podpop = ["assets/turntable/*.png", "assets/model/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

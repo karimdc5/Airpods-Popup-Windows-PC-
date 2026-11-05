@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import bisect
 import ctypes
+import json
 import math
 import sys
 import time
@@ -79,6 +80,10 @@ SCREEN_GAP = 18  # between the card and the bottom of the work area
 SHADOW_MARGIN = 40
 ENTER_RISE = 8
 FADE_MS = 180
+# After the intro, the buds glide to their place on the left and the case slides
+# right (closing as it goes), instead of a cross-dissolve between the two layouts.
+MOVE_S = 0.6
+_EASE = QEasingCurve(QEasingCurve.Type.InOutCubic)
 # The card never leaves mid-spin: it waits for the turn to finish, then shows
 # the still at least this long (and never less than the usual duration).
 STILL_HOLD_MS = 1500
@@ -262,6 +267,11 @@ class _Spin:
         self.done = True
         self._index = max(0, len(self.frames) - 1)
 
+    def first_pixmap(self) -> QPixmap | None:
+        if self.frames:
+            return self.frames[0]
+        return self.still
+
     def pixmap(self) -> QPixmap | None:
         if self.done and self.still is not None:
             return self.still
@@ -298,6 +308,16 @@ class _Card(QWidget):
         self._started = time.monotonic()
         self._spin = _Spin(self.update, self.spin_finished.emit)
         self._case_art: QPixmap | None = None
+        # PodPop's own model (Pro models): an intro played first, then still buds and case.
+        self._intro = _Spin(self.update, self._intro_done)
+        self._model_buds: QPixmap | None = None
+        self._model_case: QPixmap | None = None
+        self._intro_playing = False
+        self._end_layers: dict[str, tuple[QPixmap, QRectF]] = {}  # the intro's last frame, per piece
+        self._end_frame = QRectF()  # that frame's size, in its own pixels
+        self._move_from: float | None = None  # when the pieces started moving into the layout
+        self._move_timer = QTimer(self, interval=16, timerType=Qt.TimerType.PreciseTimer)
+        self._move_timer.timeout.connect(self._move_tick)
         self._tick = QTimer(self, interval=33)  # drives the fallback model's single turn
         self._tick.timeout.connect(self._fallback_tick)
 
@@ -311,25 +331,62 @@ class _Card(QWidget):
             self._spin.load(hud.spin_for(view.hud), hud.still_for(view.hud))
             case = hud.case_for(view.hud)
             self._case_art = QPixmap(str(case)) if case is not None else None
+            self._intro.load(hud.model_art(view.hud, "intro"), None)
+            self._model_buds = _pixmap(hud.model_art(view.hud, "buds"))
+            self._model_case = _pixmap(hud.model_art(view.hud, "case"))
+            self._end_layers, self._end_frame = _intro_end_layers(view.hud)
         self.view = view
         self.update()
 
     def start(self) -> None:
+        self._move_from = None
+        if self.animate and self._intro.frames:
+            # First the model's intro (the lid opens, the buds rise out), then the usual layout.
+            self._intro_playing = True
+            self._intro.play()
+        else:
+            self._start_main()
+
+    def _start_main(self) -> None:
         self._started = time.monotonic()
         if not self.animate:
             self._spin.hold()
         elif self._spin.available:
             self._spin.play()
+        elif self._model_buds is None:
+            self._tick.start()  # PodPop's drawn buds turn once
+
+    def _intro_done(self) -> None:
+        self._intro_playing = False
+        if self._end_layers:
+            self._move_from = time.monotonic()
+            self._move_timer.start()
         else:
-            self._tick.start()
+            self._layout_reached()
+
+    def _move_tick(self) -> None:
+        if self._move_from is not None and time.monotonic() - self._move_from >= MOVE_S:
+            self._move_from = None
+            self._move_timer.stop()
+            self._layout_reached()
+        self.update()
+
+    def _layout_reached(self) -> None:
+        self._start_main()
+        if not self.spinning:
+            self.spin_finished.emit()  # nothing else to wait for: the card may time out now
 
     def stop(self) -> None:
         self._tick.stop()
+        self._move_timer.stop()
+        self._intro_playing, self._move_from = False, None
+        self._intro.hold()
         self._spin.hold()
 
     @property
     def spinning(self) -> bool:
-        return not self._spin.done or self._tick.isActive()
+        moving = self._move_from is not None
+        return self._intro_playing or moving or not self._spin.done or self._tick.isActive()
 
     def _fallback_tick(self) -> None:
         if time.monotonic() - self._started >= turntable.TURN_S:
@@ -381,11 +438,21 @@ class _Card(QWidget):
             row_w = CLIP + ART_GAP + CASE_W
             buds_box = QRectF((w - row_w) / 2, y, CLIP, CLIP)
             case_box = QRectF(buds_box.right() + ART_GAP, y, CASE_W, CLIP)
-            self._paint_clip(p, buds_box)
-            self._paint_case(p, case_box)
         else:
             buds_box = QRectF((w - CLIP) / 2, y, CLIP, CLIP)
+            case_box = None
+        art = buds_box.united(case_box) if case_box is not None else buds_box
+        if self._intro_playing:  # the intro fills the whole art row
+            frame = self._intro.pixmap()
+            if frame is not None and not frame.isNull():
+                p.drawPixmap(_fit(art, frame.width(), frame.height()), frame, QRectF(frame.rect()))
+        elif self._move_from is not None and case_box is not None:
+            t = _EASE.valueForProgress(min((time.monotonic() - self._move_from) / MOVE_S, 1.0))
+            self._paint_move(p, art, buds_box, case_box, t)
+        else:
             self._paint_clip(p, buds_box)
+            if case_box is not None:
+                self._paint_case(p, case_box)
         y += CLIP + CLIP_MARGIN[1]
 
         # Each battery centred under its own artwork.
@@ -403,11 +470,75 @@ class _Card(QWidget):
         p.drawText(QRectF(0, y, w, STATUS_PX + 4), Qt.AlignmentFlag.AlignCenter, self.status)
         p.end()
 
+    def _paint_move(self, p: QPainter, art: QRectF, buds_box: QRectF, case_box: QRectF, t: float) -> None:
+        """Each piece travels from where the intro left it to its place in the layout."""
+        frame_rect = _fit(art, self._end_frame.width(), self._end_frame.height())
+        scale = frame_rect.width() / self._end_frame.width()
+
+        def in_card(source: QRectF) -> QRectF:  # intro-frame pixels -> card coordinates
+            return QRectF(frame_rect.left() + source.left() * scale, frame_rect.top() + source.top() * scale,
+                          source.width() * scale, source.height() * scale)
+
+        targets = {"buds": (self._buds_picture(), self._buds_rect(buds_box)),
+                   "case": (self._case_picture(), self._case_rect(case_box))}
+        for part, (picture, end) in targets.items():
+            layer = self._end_layers.get(part)
+            if layer is None or picture is None or end is None:
+                continue
+            pixmap, source = layer
+            start = in_card(source)
+            rect = _lerp_rect(start, end, t)
+            # The intro's piece hands over to the final picture as it travels
+            # (for the case: open to closed), each kept in its own proportions.
+            # The final picture comes in underneath first and the intro's piece
+            # leaves on top afterwards, so the piece never looks see-through.
+            p.setOpacity(min(1.0, t * 2))
+            p.drawPixmap(_fit(rect, picture.width(), picture.height()), picture, QRectF(picture.rect()))
+            p.setOpacity(min(1.0, (1.0 - t) * 2))
+            p.drawPixmap(_fit(rect, source.width(), source.height()), pixmap, source)
+        p.setOpacity(1.0)
+
+    def _buds_picture(self) -> QPixmap | None:
+        """What the buds settle into: your artwork's first frame, the model render, or the drawn buds."""
+        if self._spin.available:
+            return self._spin.first_pixmap()
+        if self._model_buds is not None:
+            return self._model_buds
+        sprites = turntable.frames(self.view.family, "buds")
+        return sprites[0] if sprites else None
+
+    def _buds_rect(self, box: QRectF) -> QRectF | None:
+        picture = self._buds_picture()
+        if picture is None:
+            return None
+        if not self._spin.available and self._model_buds is not None:
+            box = box.adjusted(4, 8, -4, -4)
+        return _fit(box, picture.width(), picture.height())
+
+    def _case_picture(self) -> QPixmap | None:
+        sprites = turntable.frames(self.view.family, "case")
+        image = self._model_case or (sprites[0] if sprites else self._case_art)
+        return None if image is None or image.isNull() else image
+
+    def _case_rect(self, box: QRectF) -> QRectF | None:
+        image = self._case_picture()
+        if image is None:
+            return None
+        # Bottom-aligned with the buds, a little narrower than its column so it sits like iOS.
+        scale = min((box.width() - 6) / image.width(), (box.height() * 0.8) / image.height())
+        w, h = image.width() * scale, image.height() * scale
+        return QRectF(box.center().x() - w / 2, box.bottom() - h - box.height() * 0.04, w, h)
+
     def _paint_clip(self, p: QPainter, box: QRectF) -> None:
+        """The buds: your own artwork if installed, else PodPop's model render, else its drawn 3D buds."""
         if self._spin.available:
             pixmap = self._spin.pixmap()
             if pixmap is not None and not pixmap.isNull():
                 p.drawPixmap(_fit(box, pixmap.width(), pixmap.height()), pixmap, QRectF(pixmap.rect()))
+            return
+        if self._model_buds is not None:
+            buds = self._model_buds
+            p.drawPixmap(_fit(box.adjusted(4, 8, -4, -4), buds.width(), buds.height()), buds, QRectF(buds.rect()))
             return
         sprites = turntable.frames(self.view.family, "buds")
         if sprites:
@@ -420,16 +551,10 @@ class _Card(QWidget):
             paint_headphones(p, box.adjusted(18, 22, -18, -22), DARK)
 
     def _paint_case(self, p: QPainter, box: QRectF) -> None:
-        """The case beside the buds: PodPop's own 3D render, front-on; ``<name>_case.png`` only for models without one."""
-        sprites = turntable.frames(self.view.family, "case")
-        image = sprites[0] if sprites else self._case_art
-        if image is None or image.isNull():
-            return
-        # Bottom-aligned with the buds, a little narrower than its column so it sits like iOS.
-        scale = min((box.width() - 6) / image.width(), (box.height() * 0.8) / image.height())
-        w, h = image.width() * scale, image.height() * scale
-        target = QRectF(box.center().x() - w / 2, box.bottom() - h - box.height() * 0.04, w, h)
-        p.drawPixmap(target, image, QRectF(image.rect()))
+        """The case beside the buds: the model render, else PodPop's drawn one, else ``<name>_case.png``."""
+        image, target = self._case_picture(), self._case_rect(box)
+        if image is not None and target is not None:
+            p.drawPixmap(target, image, QRectF(image.rect()))
 
     def _paint_group(self, p: QPainter, cx: float, top: float, group: BatteryGroup) -> None:
         battery = QRectF(cx - BATTERY_W / 2, top, BATTERY_W, BATTERY_H)
@@ -489,6 +614,34 @@ def _paint_bolt(p: QPainter, r: QRectF) -> None:
     bolt.closeSubpath()
     p.strokePath(bolt, QPen(QColor(0, 0, 0, 90), 1.0))
     p.fillPath(bolt, BOLT)
+
+
+def _intro_end_layers(name: str) -> tuple[dict[str, tuple[QPixmap, QRectF]], QRectF]:
+    """The intro's last frame split into buds and case, with where each sits in it."""
+    layout_path = hud.model_art(name, "intro_end")
+    if layout_path is None:
+        return {}, QRectF()
+    layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    layers = {}
+    for part in ("buds", "case"):
+        pixmap = _pixmap(hud.model_art(name, f"intro_end_{part}"))
+        if pixmap is not None:
+            layers[part] = (pixmap, QRectF(*layout[part]))
+    return layers, QRectF(0, 0, *layout["frame"])
+
+
+def _lerp_rect(a: QRectF, b: QRectF, t: float) -> QRectF:
+    return QRectF(
+        a.left() + (b.left() - a.left()) * t, a.top() + (b.top() - a.top()) * t,
+        a.width() + (b.width() - a.width()) * t, a.height() + (b.height() - a.height()) * t,
+    )
+
+
+def _pixmap(path) -> QPixmap | None:
+    if path is None:
+        return None
+    pixmap = QPixmap(str(path))
+    return None if pixmap.isNull() else pixmap
 
 
 def _fit(box: QRectF, w: int, h: int) -> QRectF:

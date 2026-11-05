@@ -20,7 +20,7 @@
 
 <p align="center">
   <img src="docs/images/demo.gif" width="460" alt="PodPop popup: the AirPods turn once beside the case, above their battery levels"><br>
-  <sub>Shown with <a href="#use-your-own-hud-artwork">your own AirPods artwork</a> installed. Out of the box, PodPop draws its own 3D AirPods.</sub>
+  <sub>The case opens, the buds rise out and settle beside it. Shown with <a href="#use-your-own-hud-artwork">your own AirPods artwork</a> installed for the buds; out of the box they're a realistic 3D model.</sub>
 </p>
 
 ## Why PodPop?
@@ -76,13 +76,16 @@ already paired in *Settings → Bluetooth & devices*.
   the audio link.
 - **Low-battery alerts** at 20% and 10%.
 - **An iOS-style battery popup**: a frosted dark card just above the taskbar.
-  The AirPods turn once and then hold still, with the case beside them. Each
+  First the case opens and the buds rise out, then they glide apart: buds on
+  the left, case on the right, holding still. Each
   has its battery underneath, iOS style: one for the AirPods (L and R
   separately when they differ), one for the case, a bolt while charging,
   yellow at 20% and red at 10%. It stays a few seconds after the turn, then
-  fades out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. The 3D
-  models are PodPop's own, rendered by [`scripts/render_turntable.py`](scripts/render_turntable.py),
-  and you can [use your own artwork](#use-your-own-hud-artwork) instead (see the before and after).
+  fades out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. AirPods
+  Pro use a realistic 3D model ([credit](#credits)) rendered in Blender by
+  [`scripts/render_model.py`](scripts/render_model.py); other models use
+  PodPop's own 3D drawing. You can also [use your own artwork](#use-your-own-hud-artwork)
+  (see the before and after).
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
   battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
   audio, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> hands the AirPods to
@@ -140,7 +143,8 @@ lie about each other, rotating addresses, a case that goes quiet when closed).
 | `handoff.py` / `idle.py` | Releases the AirPods to your phone when you step away from the PC. Pure and tested. |
 | `autostart.py` | Start at sign-in through a per-user Task Scheduler task. |
 | `ui/` | The popup card (`popup.py`), finding your own artwork (`hud.py`), PodPop's 3D frames (`turntable.py`), vector artwork for AirPods Max and the tray icon, the settings window. |
-| `scripts/render_turntable.py` | Models the AirPods and cases as signed distance fields and ray-marches the 3D frames with numpy. |
+| `scripts/render_model.py` / `make_model_assets.py` | Render the AirPods Pro 3D model in Blender: the intro animation, its last frame split into buds and case (so the popup can move them into place), and the stills. |
+| `scripts/render_turntable.py` | PodPop's own drawn 3D buds and cases for the other models: signed distance fields, ray-marched with numpy. |
 | `scripts/import_hud.py` | Installs your own artwork: converts animated PNG spins to WebP, copies stills and cases, and (with `--fetch`) gets the case symbols via `fetch_symbols.py` and draws them with `render_case.py`. |
 | `app.py` | Wires everything together on the Qt thread. |
 
@@ -180,13 +184,14 @@ Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
 
 ## Use your own HUD artwork
 
-Out of the box, the popup shows PodPop's own 3D-rendered AirPods. If you have
-Apple's AirPods artwork for personal use, PodPop can show that instead. Only
-the buds change; everything else on the card stays the same:
+Out of the box, the popup shows a realistic 3D model of AirPods Pro (and
+PodPop's own 3D drawing for other models). If you have Apple's AirPods artwork
+for personal use, PodPop can show that for the buds instead: after the intro,
+they turn once and settle on Apple's pose. Everything else stays the same:
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/hud-before.png" width="300" alt="The popup with PodPop's own 3D AirPods"><br><sub><b>Before:</b> PodPop's own 3D buds (what everyone gets)</sub></td>
+    <td align="center"><img src="docs/images/hud-before.png" width="300" alt="The popup with PodPop's own 3D AirPods"><br><sub><b>Before:</b> the built-in 3D model (what everyone gets)</sub></td>
     <td align="center"><img src="docs/images/hud-after.png" width="300" alt="The popup with Apple's AirPods artwork"><br><sub><b>After:</b> with your own artwork installed</sub></td>
   </tr>
 </table>
@@ -214,7 +219,7 @@ For each model you want, you need two images, named exactly like this:
 - The **still** is a single transparent PNG of the AirPods facing front. It's
   shown after the spin, and it's optional: without it, the spin's last frame
   stays up.
-- Any model you don't add keeps PodPop's own 3D buds.
+- Any model you don't add keeps the built-in 3D buds.
 
 Put all your files in one folder, for example `C:\AirPods art`.
 
@@ -290,6 +295,12 @@ PodPop, then delete `PodPop.exe`. To remove its data too, delete
 Issues and pull requests are welcome.
 
 ## Credits
+The AirPods Pro 3D model is ["AirPods Pro"](https://sketchfab.com/3d-models/airpods-pro-3f84ddc3d87a4ec0a5e5f379abfecd9c)
+by **Jed Falcone** ([@jedlas012](https://sketchfab.com/jedlas012)), licensed
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); PodPop renders it
+with its own camera, lighting and framing and uses the opening part of its
+animation (details in [`src/podpop/assets/model/CREDITS.md`](src/podpop/assets/model/CREDITS.md)).
+
 The protocol layout was cross-checked against
 [AirPodsDesktop](https://github.com/SpriteOvO/AirPodsDesktop) (GPL-3.0; no
 code copied), OpenPods, and furiousMAC's Continuity research.

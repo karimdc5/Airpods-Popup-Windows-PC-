@@ -46,6 +46,24 @@ def case_for(name: str) -> Path | None:
     return _find(name, "_case", (".png", ".webp"))
 
 
+# PodPop's own renders of a CC BY 3D model ("AirPods Pro" by Jed Falcone; see
+# assets/model/CREDITS.md), shipped with the app: the intro and the stills.
+_MODEL = Path(__file__).resolve().parent.parent / "assets" / "model"
+_MODEL_KEYS = {"airpodsPro": "pro", "airpodsPro3": "pro"}
+
+
+def model_art(name: str, part: str) -> Path | None:
+    """``part``: "intro" (played once as the popup appears), "buds", "case", or the
+    intro's last frame as layers: "intro_end_buds", "intro_end_case", and
+    "intro_end" (where each sits in it)."""
+    key = _MODEL_KEYS.get(name)
+    if key is None:
+        return None
+    ext = {"intro": "webp", "intro_end": "json"}.get(part, "png")
+    path = _MODEL / f"{key}_{part}.{ext}"
+    return path if path.is_file() else None
+
+
 def _find(name: str, suffix: str, extensions: tuple[str, ...]) -> Path | None:
     # PODPOP_NO_CLIP=1: show what a fresh install shows (README screenshots use this).
     if os.environ.get("PODPOP_NO_CLIP"):

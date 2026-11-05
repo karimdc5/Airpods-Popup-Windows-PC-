@@ -24,7 +24,7 @@ from podpop.ui.popup import PopupWindow  # noqa: E402
 from podpop.ui.theme import DARK, LIGHT  # noqa: E402
 
 FRAME_MS = 40  # 25 fps
-RECORD_MS = 6600  # the buds' one turn as the card appears (6 s), then the still
+RECORD_MS = 8700  # the intro (~2 s), the buds turning once (6 s), then the still
 HOLD_MS = 2500  # rest on the still before the GIF loops
 # Colours that must survive the 256-colour palette: the battery fills and white.
 KEY_COLOURS = ((48, 209, 88), (255, 214, 10), (255, 69, 58), (255, 255, 255))

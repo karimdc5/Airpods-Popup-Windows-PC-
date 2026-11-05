@@ -77,7 +77,7 @@ already paired in *Settings → Bluetooth & devices*.
   the case, and the connection status. It fades in, stays 4 seconds, and fades
   out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. The 3D models
   are PodPop's own, rendered by [`scripts/render_turntable.py`](scripts/render_turntable.py),
-  and you can [use your own artwork](#use-your-own-hud-artwork) instead.
+  and you can [use your own artwork](#use-your-own-hud-artwork) instead (see the before and after).
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
   battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
   audio, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> hands the AirPods to
@@ -172,38 +172,98 @@ Settings are stored in `%APPDATA%\PodPop\settings.json` and logs in
 
 ## Use your own HUD artwork
 
-When the popup appears, the AirPods turn once and then stay still. By default
-that's PodPop's own 3D model. PodPop doesn't ship Apple artwork, but if you
-have some for personal use, drop it in `%APPDATA%\PodPop\hud\`:
+Out of the box, the popup shows PodPop's own 3D-rendered AirPods. If you have
+Apple's AirPods artwork for personal use, PodPop can show that instead. Only
+the buds change; everything else on the card stays the same:
 
-| File | What it is |
-|---|---|
-| `airpodsPro_spin.webp` | One full turn with transparency, played once (animated WebP or GIF; Qt can't animate APNG, so convert one first) |
-| `airpodsPro_still.png` | The pose shown afterwards (optional; without it the spin's last frame stays) |
-| `airpodsPro_case.png` | The case beside the buds, only for models without PodPop's own 3D case render (which is the default) |
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/hud-before.png" width="300" alt="The popup with PodPop's own 3D AirPods"><br><sub><b>Before:</b> PodPop's own 3D buds (what everyone gets)</sub></td>
+    <td align="center"><img src="docs/images/hud-after.png" width="300" alt="The popup with Apple's AirPods artwork"><br><sub><b>After:</b> with your own artwork installed</sub></td>
+  </tr>
+</table>
 
-The names follow the model: `airpods`, `airpodsGen3`, `airpodsGen4`,
-`airpodsPro`, `airpodsPro3`, `airpodsMax`, `beatssolo` and `beatsstudio`
-(unknown models use `airpodsGen4`). Put your files in one folder and run one
-command:
+PodPop doesn't include Apple's artwork, because it isn't PodPop's to give
+away, so you need to supply the files yourself.
+
+### 1. Get the files
+
+For each model you want, you need two images, named exactly like this:
+
+| Your AirPods | Spin (one full turn, played once) | Still (the pose afterwards) |
+|---|---|---|
+| AirPods (1st / 2nd generation) | `airpods_spin.png` | `airpods_still.png` |
+| AirPods (3rd generation) | `airpodsGen3_spin.png` | `airpodsGen3_still.png` |
+| AirPods 4, 4 ANC, 5 | `airpodsGen4_spin.png` | `airpodsGen4_still.png` |
+| AirPods Pro, Pro 2 | `airpodsPro_spin.png` | `airpodsPro_still.png` |
+| AirPods Pro 3 | `airpodsPro3_spin.png` | `airpodsPro3_still.png` |
+| AirPods Max | `airpodsMax_spin.png` | `airpodsMax_still.png` |
+| Beats Solo | `beatssolo_spin.png` | `beatssolo_still.png` |
+| Beats Studio, Studio Buds, Fit Pro | `beatsstudio_spin.png` | `beatsstudio_still.png` |
+
+- The **spin** is an animated PNG (APNG) of the AirPods turning once, on a
+  transparent background. It plays once when the popup appears.
+- The **still** is a single transparent PNG of the AirPods facing front. It's
+  shown after the spin, and it's optional: without it, the spin's last frame
+  stays up.
+- Any model you don't add keeps PodPop's own 3D buds.
+
+Put all your files in one folder, for example `C:\AirPods art`.
+
+### 2. Install them (one command)
+
+The installer script needs Python, because it converts the animated PNGs into
+a format the popup can play. One-time setup:
+
+1. Install [Python 3.11 or newer](https://www.python.org/downloads/). In the
+   installer, tick **Add python.exe to PATH**.
+2. Download this project: **Code → Download ZIP** at the top of this page,
+   then unzip it.
+3. Open PowerShell in the unzipped folder (in File Explorer, click the
+   address bar, type `powershell` and press Enter) and run:
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\pip install -e ".[dev]"
+   ```
+
+Then install your artwork:
 
 ```powershell
-.\.venv\Scripts\python scripts\import_hud.py C:\path\to\your\hud --fetch
+.\.venv\Scripts\python scripts\import_hud.py "C:\AirPods art" --fetch
 ```
 
-It converts the spins to WebP (Qt can't animate APNG), copies the stills and
-cases, downloads the case symbols if you don't have them yet (`--fetch`), and
-renders case pictures from them. Restart PodPop to pick them up.
+It lists every file as it goes, for example
+`airpodsPro_spin.png: 180 frames, 5.9 s -> airpodsPro_spin.webp`. Everything
+goes into `%APPDATA%\PodPop\hud\`, PodPop's private folder on your PC.
 
-**Case symbols:** the case beside the buds is PodPop's own 3D render by
-default. The symbol pictures are the fallback for models without a render;
-they're drawn from [SF Symbols](https://developer.apple.com/sf-symbols/)
-SVGs exported by [brendanballon/sfsymbols-svg](https://github.com/brendanballon/sfsymbols-svg).
-Those are Apple's, under Apple's SF Symbols licence, so they aren't included
-here: `--fetch` (or `scripts/fetch_symbols.py` on its own) downloads them to
-your machine from a pinned commit, into
-[`src/podpop/assets/symbols/`](src/podpop/assets/symbols/README.md). That
-folder and the PNGs rendered from it are git-ignored, like the HUD clips.
+### 3. Restart PodPop
+
+Right-click the tray icon, choose **Quit PodPop**, then start PodPop again.
+Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> to see the popup with your
+artwork.
+
+**To undo it,** delete the folder `%APPDATA%\PodPop\hud` and restart PodPop.
+
+<details>
+<summary>Details for the curious</summary>
+
+- The popup plays animated WebP or GIF, not animated PNG, so the script
+  converts each spin to lossless WebP with the same frames and timing. If
+  your spins are already WebP, you can skip the script and copy them straight
+  into `%APPDATA%\PodPop\hud\` as `<name>_spin.webp`.
+- The case beside the buds is PodPop's own 3D render for every model. A
+  `<name>_case.png` in the same folder is only used for models without one.
+- `--fetch` downloads [SF Symbols](https://developer.apple.com/sf-symbols/)
+  case outlines, exported by
+  [brendanballon/sfsymbols-svg](https://github.com/brendanballon/sfsymbols-svg),
+  from a pinned commit. They're the fallback case picture for models without a
+  3D case. They're Apple's, under Apple's SF Symbols licence, so they aren't
+  included here; they're downloaded to your machine into
+  [`src/podpop/assets/symbols/`](src/podpop/assets/symbols/README.md). That
+  folder and the PNGs rendered from it are git-ignored.
+
+</details>
 
 ## Uninstall
 Right-click the tray icon → **Settings** → untick **Start with Windows**, quit

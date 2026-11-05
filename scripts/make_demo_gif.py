@@ -24,8 +24,10 @@ from podpop.ui.popup import PopupWindow  # noqa: E402
 from podpop.ui.theme import DARK, LIGHT  # noqa: E402
 
 FRAME_MS = 40  # 25 fps
-RECORD_MS = 4000  # one full sway of the buds, there and back
-HOLD_MS = 40  # the turn loops seamlessly
+RECORD_MS = 6600  # the buds' one turn as the card appears (6 s), then the still
+HOLD_MS = 2500  # rest on the still before the GIF loops
+# Colours that must survive the 256-colour palette: the battery fills and white.
+KEY_COLOURS = ((48, 209, 88), (255, 214, 10), (255, 69, 58), (255, 255, 255))
 PAD = 36
 BACKDROP = ((38, 44, 92), (112, 58, 120))  # top-left -> bottom-right, readable on light and dark pages
 
@@ -56,7 +58,9 @@ def main() -> int:
     app.exec()
 
     backdrop = _backdrop(frames[0].size)
-    scenes = [_compose(backdrop, f) for f in frames]
+    composed = [_compose(backdrop, f) for f in frames]
+    palette = _palette(composed)
+    scenes = [c.quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG) for c in composed]
     durations = [FRAME_MS] * (len(scenes) - 1) + [HOLD_MS]
     scenes[0].save(
         args.out, save_all=True, append_images=scenes[1:], duration=durations, loop=0, optimize=True, disposal=1
@@ -102,7 +106,22 @@ def _backdrop(size: tuple[int, int]) -> Image.Image:
 def _compose(backdrop: Image.Image, frame: Image.Image) -> Image.Image:
     scene = backdrop.copy()
     scene.alpha_composite(frame, (PAD, PAD))
-    return scene.convert("RGB").quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+    return scene.convert("RGB")
+
+
+def _palette(scenes: list[Image.Image]) -> Image.Image:
+    """One palette for every frame (no flicker), built from a sample of frames plus
+    big swatches of the key colours: the battery fills cover too few pixels for a
+    plain median cut to keep them, which turned the green into grey."""
+    sample = scenes[:: max(1, len(scenes) // 8)]
+    w, h = sample[0].size
+    swatch = 160
+    sheet = Image.new("RGB", (w * len(sample) + swatch, max(h, swatch * len(KEY_COLOURS))))
+    for i, scene in enumerate(sample):
+        sheet.paste(scene, (i * w, 0))
+    for i, colour in enumerate(KEY_COLOURS):
+        sheet.paste(Image.new("RGB", (swatch, swatch), colour), (w * len(sample), i * swatch))
+    return sheet.quantize(colors=255, method=Image.Quantize.MEDIANCUT)
 
 
 if __name__ == "__main__":

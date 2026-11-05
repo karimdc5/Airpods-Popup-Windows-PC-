@@ -19,7 +19,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="460" alt="PodPop popup: 3D AirPods and case slowly spinning above the battery levels">
+  <img src="docs/images/demo.gif" width="460" alt="PodPop popup: the AirPods turn once beside the case, above their battery levels"><br>
+  <sub>Shown with <a href="#use-your-own-hud-artwork">your own AirPods artwork</a> installed. Out of the box, PodPop draws its own 3D AirPods.</sub>
 </p>
 
 ## Why PodPop?
@@ -51,15 +52,17 @@ already paired in *Settings → Bluetooth & devices*.
 
 ## Features
 
-<img src="docs/images/popup-connect.png" width="330" align="right" alt="Popup offering to connect AirPods that are near the PC">
+<img src="docs/images/popup-connect.png" width="330" align="right" alt="Popup for AirPods that are nearby but not connected; clicking it connects them">
 
 - **Pops up when you open the case**, and when the AirPods connect. Click the
   tray icon to see it any time.
 - **Connects automatically** when you open the case, even if the AirPods were
-  on your iPhone. There's also a one-click **Connect** button.
+  on your iPhone. When the popup says *Not connected*, one click on it connects
+  them.
 - **Hand-off to your phone.** Walk away from the PC wearing your AirPods,
   and after 2 minutes without keyboard or mouse input PodPop lets go of them
-  so your iPhone can take over. Back at the PC, the popup offers **Connect**.
+  so your iPhone can take over. Back at the PC, the popup appears, and one
+  click on it brings them back.
   It never cuts off music that's playing on the PC. Or press
   <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> to hand them over right away.
 - **Battery for left, right and case**, plus charging state and **in-ear**
@@ -72,11 +75,13 @@ already paired in *Settings → Bluetooth & devices*.
   plays nothing after you walk away and come back. PodPop notices and reopens
   the audio link.
 - **Low-battery alerts** at 20% and 10%.
-- **An iOS-style battery HUD**: a frosted dark card near the top of the
-  screen with the AirPods turning in 3D, a battery capsule for each bud and
-  the case, and the connection status. It fades in, stays 4 seconds, and fades
-  out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. The 3D models
-  are PodPop's own, rendered by [`scripts/render_turntable.py`](scripts/render_turntable.py),
+- **An iOS-style battery popup**: a frosted dark card just above the taskbar.
+  The AirPods turn once and then hold still, with the case beside them. Each
+  has its battery underneath, iOS style: one for the AirPods (L and R
+  separately when they differ), one for the case, a bolt while charging,
+  yellow at 20% and red at 10%. It stays a few seconds after the turn, then
+  fades out. Works with AirPods 1–4, Pro, Pro 2 and Max, plus Beats. The 3D
+  models are PodPop's own, rendered by [`scripts/render_turntable.py`](scripts/render_turntable.py),
   and you can [use your own artwork](#use-your-own-hud-artwork) instead (see the before and after).
 - **Global hotkeys:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> shows the
   battery, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> connects or fixes
@@ -88,6 +93,8 @@ already paired in *Settings → Bluetooth & devices*.
 <br clear="right">
 
 ### Works with every model
+
+Out of the box, with PodPop's own 3D artwork:
 
 <table>
   <tr>
@@ -132,8 +139,9 @@ lie about each other, rotating addresses, a case that goes quiet when closed).
 | `ear.py` / `media.py` | In-ear changes → pause/resume through Windows media sessions. |
 | `handoff.py` / `idle.py` | Releases the AirPods to your phone when you step away from the PC. Pure and tested. |
 | `autostart.py` | Start at sign-in through a per-user Task Scheduler task. |
-| `ui/` | Popup card, 3D turntable player, vector artwork (AirPods Max, tray icon), settings window. |
-| `scripts/render_turntable.py` | Models the AirPods and cases as signed distance fields and ray-marches the 3D turntable frames with numpy. |
+| `ui/` | The popup card (`popup.py`), finding your own artwork (`hud.py`), PodPop's 3D frames (`turntable.py`), vector artwork for AirPods Max and the tray icon, the settings window. |
+| `scripts/render_turntable.py` | Models the AirPods and cases as signed distance fields and ray-marches the 3D frames with numpy. |
+| `scripts/import_hud.py` | Installs your own artwork: converts animated PNG spins to WebP, copies stills and cases, and (with `--fetch`) gets the case symbols via `fetch_symbols.py` and draws them with `render_case.py`. |
 | `app.py` | Wires everything together on the Qt thread. |
 
 ### What AirPods don't broadcast
@@ -276,6 +284,7 @@ PodPop, then delete `PodPop.exe`. To remove its data too, delete
 - [x] Global hotkeys
 - [x] Automatic connect when the case opens
 - [x] Hand-off to your phone when you step away
+- [ ] Recognise AirPods Pro 3 and AirPods 5 (their model IDs aren't in the catalog yet, so they use the AirPods 4 artwork)
 - [ ] Artwork in each AirPods color (the color byte is already decoded)
 
 Issues and pull requests are welcome.

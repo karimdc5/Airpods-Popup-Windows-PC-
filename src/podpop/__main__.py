@@ -67,10 +67,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if getattr(sys, "frozen", False):
-        # Keep the startup entry pointing at this exe (and on the logon task).
         from podpop import autostart
 
-        threading.Thread(target=autostart.refresh, name="podpop-autostart", daemon=True).start()
+        if not settings_path.exists():
+            # First launch of the exe: start at sign-in from now on (Settings can turn it off),
+            # and save the settings so this happens only once.
+            threading.Thread(target=autostart.set_enabled, args=(True,), name="podpop-autostart", daemon=True).start()
+            settings.save(settings_path)
+        else:
+            # Keep the startup entry pointing at this exe (and on the logon task).
+            threading.Thread(target=autostart.refresh, name="podpop-autostart", daemon=True).start()
 
     app.setWindowIcon(render_icon())
     podpop = PodPopApp(settings, settings_path)

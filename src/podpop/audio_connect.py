@@ -32,7 +32,7 @@ import logging
 import asyncio
 import re
 import time
-from ctypes import HRESULT, POINTER, Structure, byref, c_uint, c_ulong, c_ushort, c_void_p, c_wchar_p
+from ctypes import HRESULT, POINTER, Structure, byref, c_float, c_uint, c_ulong, c_ushort, c_void_p, c_wchar_p
 from ctypes.wintypes import DWORD, ULONG
 from dataclasses import dataclass
 from enum import IntEnum
@@ -137,6 +137,18 @@ class IMMDevice(IUnknown):
     ]
 
 
+class IAudioMeterInformation(IUnknown):
+    _iid_ = GUID("{C02216F6-8C67-4B5B-9D00-D008E73E0064}")
+    _methods_ = [
+        COMMETHOD([], HRESULT, "GetPeakValue", (["out"], POINTER(c_float), "pfPeak")),
+        COMMETHOD([], HRESULT, "GetMeteringChannelCount", (["out"], POINTER(c_uint), "pnChannelCount")),
+        COMMETHOD(
+            [], HRESULT, "GetChannelsPeakValues", (["in"], c_uint, "u32ChannelCount"), (["in"], POINTER(c_float), "afPeakValues")
+        ),
+        COMMETHOD([], HRESULT, "QueryHardwareSupport", (["out"], POINTER(DWORD), "pdwHardwareSupportMask")),
+    ]
+
+
 class IMMDeviceCollection(IUnknown):
     _iid_ = GUID("{0BD7A1BE-7A1A-44DB-8397-CC5392387B5E}")
     _methods_ = [
@@ -177,6 +189,41 @@ def mac_from_device_id(device_id: str) -> str:
     if not match:
         raise ConnectError(f"No Bluetooth address in {device_id!r}")
     return match.group(1).replace(":", "").upper()
+
+
+def output_peak(mac: str, seconds: float = 1.5, every: float = 0.1) -> float:
+    """The loudest the sound going to this headset got over ``seconds`` (0.0-1.0).
+
+    Read from Windows' own volume meter on the headset's playback endpoint (the
+    green bar in Sound settings), so it sees any app: a browser tab, a game, a
+    call. 0.0 means silence, or no active endpoint.
+    """
+    mac = mac.upper()
+    owns_com = _init_com()
+    try:
+        enumerator = comtypes.CoCreateInstance(_CLSID_MM_DEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
+        collection = enumerator.EnumAudioEndpoints(_E_RENDER, _DEVICE_STATE_ACTIVE)
+        meters = []
+        for i in range(collection.GetCount()):
+            endpoint = collection.Item(i)
+            try:
+                filter_id = _connected_filter_id(endpoint) or ""
+            except (OSError, comtypes.COMError):
+                continue
+            if mac in filter_id.upper().replace(":", ""):
+                meter = endpoint.Activate(byref(IAudioMeterInformation._iid_), CLSCTX_ALL, None)
+                meters.append(meter.QueryInterface(IAudioMeterInformation))
+        peak = 0.0
+        deadline = time.monotonic() + seconds
+        while meters:
+            peak = max([peak] + [m.GetPeakValue() for m in meters])
+            if peak > 0.0 or time.monotonic() >= deadline:
+                break
+            time.sleep(every)
+        return peak
+    finally:
+        if owns_com:
+            comtypes.CoUninitialize()
 
 
 def active_devices() -> set[str]:

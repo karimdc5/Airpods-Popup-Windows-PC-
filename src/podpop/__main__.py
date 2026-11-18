@@ -93,9 +93,12 @@ def _configure_logging(debug: bool) -> None:
     handlers: list[logging.Handler] = []
     try:
         log_dir().mkdir(parents=True, exist_ok=True)
+        # delay=True opens the file on the first record and, if that fails (the file
+        # briefly locked at sign-in, say), tries again on the next one, instead of
+        # one failed open silencing the log for the whole session.
         handlers.append(
             logging.handlers.RotatingFileHandler(
-                log_dir() / "podpop.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+                log_dir() / "podpop.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8", delay=True
             )
         )
     except OSError:

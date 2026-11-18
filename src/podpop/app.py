@@ -61,6 +61,8 @@ CONNECT_TIMEOUT_MS = 35000  # covers a full reconnect cycle
 REPAIR_DELAY_MS = 3000
 EAR_TICK_MS = 200
 AWAY_POLL_MS = 5000
+# Peak level (0-1) on the AirPods' meter below which they count as silent.
+SILENCE_PEAK = 0.001
 
 
 class _Bridge(QObject):
@@ -95,6 +97,7 @@ class PodPopApp(QObject):
         self._last_tick = time.monotonic()
         self._ignored_lid_logged = float("-inf")
         self._handoff = Handoff()
+        self._present_since = time.monotonic()  # last time the AirPods connected or the case opened
 
         self._bridge = _Bridge()
         queued = Qt.ConnectionType.QueuedConnection
@@ -185,7 +188,7 @@ class PodPopApp(QObject):
         else:
             self.connect_device()
 
-    def release_device(self, *, pause_media: bool = True) -> None:
+    def release_device(self, *, pause_media: bool = True, reason: str = "") -> None:
         """Drop this PC's audio link so another device (your iPhone) can take the AirPods."""
         target = self._paired_airpods()
         if not self._audio_connected or self._connecting or target is None:
@@ -195,7 +198,7 @@ class PodPopApp(QObject):
         except audio_connect.ConnectError:
             log.exception("Cannot reach %s", target.name)
             return
-        log.info("Releasing %s for another device", target.name)
+        log.info("Releasing %s for another device%s", target.name, f" ({reason})" if reason else "")
         if pause_media:
             self._media.pause()  # don't let the PC carry on out of its speakers
         self._handoff.hold(time.monotonic())
@@ -240,6 +243,7 @@ class PodPopApp(QObject):
             if self._doctor.advert(in_ear=in_ear, audio_connected=bool(self._audio_connected)):
                 self._auto_repair()
         if result.lid_opened:
+            self._present_since = time.monotonic()
             log.info("Case opened")
             if self._settings.auto_connect_on_case_open:
                 self.connect_device()  # also cancels a hand-off: opening the case means "here"
@@ -299,10 +303,12 @@ class PodPopApp(QObject):
         if connected == self._audio_connected:
             return
         self._audio_connected = connected
+        if connected:
+            self._present_since = time.monotonic()
         log.info("AirPods audio %s%s", "connected" if connected else "disconnected", " (already)" if initial else "")
         if connected and not initial and not self._connecting and self._handoff.holding(time.monotonic()):
             log.info("Windows took the AirPods back during a hand-off; releasing them again")
-            self.release_device(pause_media=False)
+            self.release_device(pause_media=False, reason="Windows took them back during a hand-off")
             self._refresh()
             return
         if not initial and not self._connecting and self._doctor.audio_changed(connected=connected):
@@ -353,7 +359,9 @@ class PodPopApp(QObject):
             self.repair_audio()
 
     def _check_away(self) -> None:
-        idle = idle_seconds()
+        # Away = no keyboard/mouse for a while *and* the AirPods have been here that
+        # long: just after they connect (case opened, Connect) you're clearly here.
+        idle = min(idle_seconds(), time.monotonic() - self._present_since)
         if self._handoff.back(idle_s=idle):
             if not self._audio_connected:
                 log.info("Back at the PC after a hand-off; offering to reconnect")
@@ -363,13 +371,33 @@ class PodPopApp(QObject):
             return
         wearing = self._tracker.snapshot().in_ear
         if self._handoff.due(idle_s=idle, connected=bool(self._audio_connected), wearing=wearing):
-            self._media.is_playing().add_done_callback(lambda f: self._bridge.handoff_checked.emit(f.result()))
+            target = self._paired_airpods()
+            threading.Thread(target=self._away_check, args=(target,), name="podpop-away", daemon=True).start()
+
+    def _away_check(self, target) -> None:  # runs on its own thread
+        """Is anything playing? Either Windows' media controls say so, or sound is
+        actually reaching the AirPods (a browser video the media controls miss)."""
+        try:
+            controls = bool(self._media.is_playing().result(timeout=5))
+        except Exception:
+            controls = True  # unsure: keep the AirPods
+        peak = 0.0
+        if not controls and target is not None:
+            try:
+                peak = audio_connect.output_peak(audio_connect.mac_from_device_id(target.device_id))
+            except Exception:
+                log.debug("Couldn't read the AirPods' output level", exc_info=True)
+                peak = 1.0  # unsure: keep the AirPods
+        playing = controls or peak > SILENCE_PEAK
+        if playing:
+            log.info("Away check: playing (media controls %s, output peak %.3f)", controls, peak)
+        self._bridge.handoff_checked.emit(playing)
 
     def _on_handoff_checked(self, playing: bool) -> None:
         wearing = self._tracker.snapshot().in_ear
         if self._handoff.confirm(playing=playing, connected=bool(self._audio_connected), wearing=wearing):
             log.info("Away from the PC while wearing the AirPods; handing them to your other device")
-            self.release_device()
+            self.release_device(reason="away from the PC")
         elif playing:
             log.info("Away from the PC, but media is playing on it; keeping the AirPods")
 
@@ -497,7 +525,7 @@ class PodPopApp(QObject):
             self.repair_audio() if self._audio_connected else self.connect_device()
             self.show_popup()
         elif name == "handoff":
-            self.release_device()
+            self.release_device(reason="Ctrl+Alt+P")
 
     def _save_settings(self) -> None:
         try:
